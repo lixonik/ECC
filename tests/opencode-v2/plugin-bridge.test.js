@@ -77,6 +77,7 @@ function createFakeContext(projectDir, options = {}) {
   const events = createEventQueue();
   const synthetic = [];
   const skills = [];
+  const skillTransforms = [];
   const asserted = [];
   const ctx = {
     location: { directory: projectDir },
@@ -91,13 +92,18 @@ function createFakeContext(projectDir, options = {}) {
     shell: { hook: register('shell') },
     skill: {
       transform: async callback => {
-        callback({ get: id => skills.find(skill => skill.id === id), add: skill => skills.push(skill) });
+        skillTransforms.push(callback);
         return { dispose: async () => {} };
       },
     },
     event: { subscribe: ({ signal }) => events.iterate(signal) },
   };
-  return { ctx, hooks, events, synthetic, skills, asserted };
+  const applySkillTransforms = () => {
+    skills.splice(0, skills.length);
+    const editor = { get: id => skills.find(skill => skill.id === id), add: skill => skills.push(skill) };
+    for (const callback of skillTransforms) callback(editor);
+  };
+  return { ctx, hooks, events, synthetic, skills, asserted, applySkillTransforms };
 }
 
 async function trigger(hooks, key, event) {
@@ -126,6 +132,7 @@ async function main() {
     const fake = createFakeContext(projectDir, options);
     const cleanup = await setupEcc(fake.ctx, { root: repoRoot, shell: 'Bash', ...options });
     if (cleanup) cleanups.push(cleanup);
+    fake.applySkillTransforms();
     return fake;
   };
 

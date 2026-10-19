@@ -46,7 +46,7 @@ export async function setupEcc(ctx, options = {}) {
 
   if (options.installDir && options.autoSync !== false) scheduleInstallSync(root, path.resolve(options.installDir), logger);
 
-  const catalog = options.skills === false
+  const skillState = options.skills === false
     ? { hidden: [] }
     : await registerSkills(ctx, root, logger, options.skills, options.skillCatalog);
 
@@ -55,21 +55,21 @@ export async function setupEcc(ctx, options = {}) {
     event.env = { ...event.env, ...shellEnvFor(root, options) };
   });
 
-  const ambient = [
-    ...(options.context === false ? [] : [eccNote(root)]),
-    ...(catalog.hidden.length > 0 ? [hiddenSkillsNote(catalog.hidden)] : []),
-  ];
+  const note = options.context === false ? null : eccNote(root);
   const rules = await registerRules(ctx, { root, projectDir, sets: options.rules, logger, shellToolName: shellTool.name });
   const pushAmbient = event => {
-    for (const text of ambient) event.system.push({ type: 'text', text });
-    const ruleText = rules?.textFor(event.sessionID);
-    if (ruleText) event.system.push({ type: 'text', text: ruleText });
+    const texts = [
+      note,
+      skillState.hidden.length > 0 ? hiddenSkillsNote(skillState.hidden) : null,
+      rules?.textFor(event.sessionID),
+    ];
+    for (const text of texts) if (text) event.system.push({ type: 'text', text });
   };
 
   if (!hooksActive) {
     const reason = hookOptions.enabled === false ? 'disabled by plugin options' : `disabled by environment (ECC_HOOKS_ENABLED=${baseEnv.ECC_HOOKS_ENABLED ?? 'unset'})`;
     logger.info(`ECC hooks inactive for ${projectDir}: ${reason}`);
-    if (ambient.length > 0 || rules) await ctx.session.hook('context', pushAmbient);
+    await ctx.session.hook('context', pushAmbient);
     return undefined;
   }
 
@@ -363,16 +363,18 @@ async function registerSkills(ctx, root, logger, selection, catalogOption) {
     if (!skills.some(skill => skill.id === id)) logger.warn(`skill ${id} requested but not found in ECC`);
   }
   const catalog = applySkillCatalog(selected, catalogOption);
-  const registered = new Set();
+  const hiddenIds = new Set(catalog.hidden);
+  const state = { hidden: [] };
   await ctx.skill.transform(editor => {
+    const hidden = [];
     for (const skill of catalog.skills) {
-      if (!editor.get(skill.id)) {
-        editor.add(skill);
-        registered.add(skill.id);
-      }
+      if (editor.get(skill.id)) continue;
+      editor.add(skill);
+      if (hiddenIds.has(skill.id)) hidden.push(skill.id);
     }
+    state.hidden = hidden;
   });
-  return { hidden: catalog.hidden.filter(id => registered.has(id)) };
+  return state;
 }
 
 function consumeEvents(ctx, signal, handlers, logger, debug) {
