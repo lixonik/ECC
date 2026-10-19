@@ -26,6 +26,7 @@ async function main() {
   const { parsePatchOperations } = await load('lib/patch.js');
   const config = await load('lib/opencode-config.js');
   const { loadEccSkills } = await load('lib/skills.js');
+  const runner = await load('lib/hook-runner.js');
   const results = [];
   const projectDir = path.resolve(os.tmpdir(), 'ecc-project');
   const env = { projectDir, shellToolName: () => 'Bash', mcpName: id => (id === 'context7_query-docs' ? 'mcp__context7__query-docs' : null) };
@@ -162,6 +163,42 @@ async function main() {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  }));
+
+  results.push(await test('hook timeout kills the whole process tree and never hangs', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-oc2-timeout-'));
+    const pidFile = path.join(dir, 'grandchild.pid');
+    const script = [
+      "const { spawn } = require('child_process');",
+      "const fs = require('fs');",
+      "const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });",
+      `fs.writeFileSync(${JSON.stringify(pidFile)}, String(grandchild.pid));`,
+      'setInterval(() => {}, 1000);',
+    ].join('\n');
+    try {
+      const started = Date.now();
+      const result = await runner.runHookProcess({ argv: ['node', '-e', script], input: {}, env: process.env, cwd: dir, timeoutMs: 1500, nodePath: process.execPath });
+      assert.strictEqual(result.timedOut, true);
+      assert.ok(Date.now() - started < 8000, `took ${Date.now() - started} ms`);
+      const grandchildPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      let alive = true;
+      try {
+        process.kill(grandchildPid, 0);
+      } catch {
+        alive = false;
+      }
+      if (alive) process.kill(grandchildPid);
+      assert.strictEqual(alive, false, 'grandchild must be killed with the hook');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }));
+
+  results.push(await test('hook runner passes stdin JSON and returns exit code and output', async () => {
+    const script = "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.word);process.stderr.write('err');process.exit(2)})";
+    const result = await runner.runHookProcess({ argv: ['node', '-e', script], input: { word: 'ping' }, env: process.env, cwd: os.tmpdir(), timeoutMs: 10000, nodePath: process.execPath });
+    assert.deepStrictEqual({ exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, timedOut: result.timedOut }, { exitCode: 2, stdout: 'ping', stderr: 'err', timedOut: false });
   }));
 
   results.push(await test('every ECC skill loads as an OpenCode skill keyed by its directory', () => {
