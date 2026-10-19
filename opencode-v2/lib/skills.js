@@ -19,6 +19,24 @@ export function loadEccSkills(root) {
   return { skills, skipped };
 }
 
+export const COMPACT_CATALOG = Object.freeze(['ecc-guide']);
+
+export function applySkillCatalog(skills, catalog = 'full') {
+  if (catalog === 'full') return { skills, hidden: [] };
+  const advertised = new Set(catalog === 'compact' ? COMPACT_CATALOG : catalog);
+  const hidden = [];
+  const result = skills.map(skill => {
+    if (advertised.has(skill.id) || skill.autoinvoke === false) return skill;
+    hidden.push(skill.id);
+    return { ...skill, autoinvoke: false };
+  });
+  return { skills: result, hidden };
+}
+
+export function hiddenSkillsNote(ids) {
+  return `More ECC skills are installed but not described here to save context. Load one with the \`skill\` tool by id when the task matches its name: ${ids.join(', ')}.`;
+}
+
 export function toSkillInfo(id, file, source) {
   const { data, body, present } = splitFrontmatter(source);
   if (!present) throw new Error('missing frontmatter');

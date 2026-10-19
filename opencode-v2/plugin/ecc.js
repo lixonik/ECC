@@ -7,7 +7,7 @@ import { emptyOutcome, interpretHookResult, mergeOutcomes } from '../lib/hook-pr
 import { loadHookManifest, selectHookCommands } from '../lib/hooks-manifest.js';
 import { configuredShell, shellToolNameFor } from '../lib/opencode-config.js';
 import { runHookProcess } from '../lib/hook-runner.js';
-import { loadEccSkills } from '../lib/skills.js';
+import { applySkillCatalog, hiddenSkillsNote, loadEccSkills } from '../lib/skills.js';
 import { CODE_MODE_TOOL, fromClaudeInput, toClaudeCalls, toClaudeResponse } from '../lib/tool-translate.js';
 import { createTranscriptMirror } from '../lib/transcript.js';
 
@@ -43,19 +43,27 @@ export async function setupEcc(ctx, options = {}) {
   const sessions = new Map();
   const startedAt = Date.now();
 
-  if (options.skills !== false) await registerSkills(ctx, root, logger, options.skills);
+  const catalog = options.skills === false
+    ? { hidden: [] }
+    : await registerSkills(ctx, root, logger, options.skills, options.skillCatalog);
 
   await ctx.shell.hook('create.before', event => {
     shellTool.observe(event.shell);
     event.env = { ...event.env, ...shellEnvFor(root, options) };
   });
 
-  const note = options.context === false ? null : eccNote(root);
+  const ambient = [
+    ...(options.context === false ? [] : [eccNote(root)]),
+    ...(catalog.hidden.length > 0 ? [hiddenSkillsNote(catalog.hidden)] : []),
+  ];
+  const pushAmbient = event => {
+    for (const text of ambient) event.system.push({ type: 'text', text });
+  };
 
   if (!hooksActive) {
     const reason = hookOptions.enabled === false ? 'disabled by plugin options' : `disabled by environment (ECC_HOOKS_ENABLED=${baseEnv.ECC_HOOKS_ENABLED ?? 'unset'})`;
     logger.info(`ECC hooks inactive for ${projectDir}: ${reason}`);
-    if (note) await ctx.session.hook('context', event => { event.system.push({ type: 'text', text: note }); });
+    if (ambient.length > 0) await ctx.session.hook('context', pushAmbient);
     return undefined;
   }
 
@@ -250,7 +258,7 @@ export async function setupEcc(ctx, options = {}) {
 
   await ctx.session.hook('context', async event => {
     const session = await sessionState(event.sessionID);
-    if (note) event.system.push({ type: 'text', text: note });
+    pushAmbient(event);
     if (session.parentID) return;
     await ensureStarted(session, session.createdHere ? 'startup' : 'resume');
     if (session.startContext) event.system.push({ type: 'text', text: session.startContext });
@@ -337,19 +345,25 @@ export async function setupEcc(ctx, options = {}) {
   };
 }
 
-async function registerSkills(ctx, root, logger, selection) {
+async function registerSkills(ctx, root, logger, selection, catalogOption) {
   const { skills, skipped } = loadEccSkills(root);
   for (const entry of skipped) logger.warn(`skill ${entry.id} skipped: ${entry.reason}`);
   const wanted = Array.isArray(selection) ? new Set(selection) : null;
   const selected = wanted ? skills.filter(skill => wanted.has(skill.id)) : skills;
-  for (const id of wanted ?? []) {
+  for (const id of [...(wanted ?? []), ...(Array.isArray(catalogOption) ? catalogOption : [])]) {
     if (!skills.some(skill => skill.id === id)) logger.warn(`skill ${id} requested but not found in ECC`);
   }
+  const catalog = applySkillCatalog(selected, catalogOption);
+  const registered = new Set();
   await ctx.skill.transform(editor => {
-    for (const skill of selected) {
-      if (!editor.get(skill.id)) editor.add(skill);
+    for (const skill of catalog.skills) {
+      if (!editor.get(skill.id)) {
+        editor.add(skill);
+        registered.add(skill.id);
+      }
     }
   });
+  return { hidden: catalog.hidden.filter(id => registered.has(id)) };
 }
 
 function consumeEvents(ctx, signal, handlers, logger, debug) {

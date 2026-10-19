@@ -64,6 +64,7 @@ node opencode-v2/install.js uninstall
 | `--shell auto\|Bash\|PowerShell` | Tool name ECC hooks see for OpenCode's `shell` tool (see Windows below) |
 | `--model-map opus=p/m,sonnet=p/m,haiku=p/m` | Pin ECC agents' Claude tiers to your models. Without it agents inherit the session model |
 | `--skills <ids>` / `--no-skills` | Register only some ECC skills, or none |
+| `--skill-catalog full\|compact\|<ids>` | Which skills are described in the system prompt. `full` (default) lists all, like Claude Code (~125k characters). `compact` describes only `ecc-guide` and lists the other ids in one line (~7k characters); every skill still loads with the `skill` tool |
 | `--no-context` | Do not add the short ECC tool-mapping note to the system prompt |
 | `--node <path>` | Node.js executable for hook scripts (default `node` on `PATH`, or `$ECC_NODE`) |
 | `--llm-summary` | Allow PreCompact/SessionEnd hooks to call the `claude` CLI for summaries (off by default) |
@@ -142,8 +143,8 @@ let OpenCode use Git Bash:
 - `SessionEnd` fires when a session is deleted or the OpenCode server shuts down. A TUI
   window closing while the background service keeps running does not end the session.
 - ECC's LLM summaries call the `claude` CLI; they are skipped unless `--llm-summary` is set.
-- The ECC skill catalog adds roughly 140k characters to the system prompt, as in Claude Code.
-  Use `--skills` to keep only what you need on small-context models.
+- The full ECC skill catalog adds roughly 125k characters to every request, as in Claude Code.
+  On small-context or metered models use `--skill-catalog compact`, or `--skills` to drop skills.
 - Not ported: the Claude Code statusline script and the MCP server list (ECC only ships an
   optional `chrome-devtools` entry; add MCP servers in OpenCode's own `mcp` config).
 

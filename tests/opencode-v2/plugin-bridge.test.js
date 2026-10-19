@@ -211,6 +211,24 @@ async function main() {
     assert.deepStrictEqual(fake.skills.map(skill => skill.id).sort(), ['security-review', 'tdd-workflow']);
   }));
 
+  results.push(await test('compact skill catalog keeps every skill loadable but describes only ecc-guide', async () => {
+    const fake = await start(createProject('compact-catalog'), { hooks: false, skillCatalog: 'compact' });
+    assert.ok(fake.skills.length > 300);
+    const advertised = fake.skills.filter(skill => skill.autoinvoke !== false && skill.description).map(skill => skill.id);
+    assert.deepStrictEqual(advertised, ['ecc-guide']);
+    const context = await trigger(fake.hooks, 'session.context', { sessionID: 'ses_compact', agent: 'build', system: [], messages: [], tools: {}, options: {} });
+    const note = context.system.map(part => part.text).find(text => text.startsWith('More ECC skills are installed'));
+    assert.ok(note && note.includes('tdd-workflow') && !note.includes('ecc-guide'));
+    assert.ok(context.system.reduce((size, part) => size + part.text.length, 0) < 15000);
+  }));
+
+  results.push(await test('explicit skill catalog describes the listed skills', async () => {
+    const fake = await start(createProject('listed-catalog'), { hooks: false, skillCatalog: ['tdd-workflow', 'angular-developer'] });
+    const advertised = fake.skills.filter(skill => skill.autoinvoke !== false).map(skill => skill.id).sort();
+    assert.deepStrictEqual(advertised.filter(id => ['angular-developer', 'tdd-workflow'].includes(id)), ['angular-developer', 'tdd-workflow']);
+    assert.ok(!advertised.includes('security-review'));
+  }));
+
   for (const cleanup of cleanups) await cleanup();
   fs.rmSync(sandbox, { recursive: true, force: true });
   const failed = results.filter(ok => !ok).length;

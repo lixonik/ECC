@@ -29,6 +29,8 @@ Hooks:
 Content:
   --model-map <map>          e.g. opus=provider/big,sonnet=provider/mid,haiku=provider/small
   --skills <ids>             register only these ECC skills (comma-separated ids)
+  --skill-catalog <mode>     full (default), compact, or comma-separated ids: which skills are
+                             described in the system prompt; the rest load by id on demand
   --no-skills                do not register ECC skills
   --no-context               do not inject the ECC tool-mapping note
   --data-home <dir>          ECC_AGENT_DATA_HOME for hooks and shells (default: ~/.claude)
@@ -51,6 +53,7 @@ const VALUE_FLAGS = Object.freeze({
   '--node': (options, value) => { options.node = value; },
   '--model-map': (options, value) => { options.modelMap = parseModelMap(value); },
   '--skills': (options, value) => { options.skills = splitList(value); },
+  '--skill-catalog': (options, value) => { options.skillCatalog = ['full', 'compact'].includes(value) ? value : splitList(value); },
   '--data-home': (options, value) => { options.dataHome = value; },
 });
 
@@ -112,6 +115,7 @@ export function pluginOptionsFrom(options) {
       ? dropUndefined({ enabled: true, profile: options.profile, disabled: options.disabledHooks.length > 0 ? options.disabledHooks : undefined })
       : false,
     skills: options.skills,
+    skillCatalog: options.skillCatalog && options.skillCatalog !== 'full' ? options.skillCatalog : undefined,
     context: options.context,
     shell: options.shell && options.shell !== 'auto' ? options.shell : undefined,
     node: options.node,
