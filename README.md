@@ -424,7 +424,8 @@ cd ECC
 | Harness | Install or setup | Notes |
 |---|---|---|
 | Cursor | `./install.sh --profile minimal --target cursor` | Project-local `.cursor/` adapter |
-| OpenCode | `npm install && npm run build:opencode && ./install.sh --profile full --target opencode --enable-hooks` | Builds the plugin payload before the full install |
+| OpenCode 1.x | `npm install && npm run build:opencode && ./install.sh --profile full --target opencode --enable-hooks` | Builds the plugin payload before the full install |
+| OpenCode 2.x | `node opencode-v2/install.js` | Runs the Claude Code hook graph through a V2 bridge plugin, with all agents, commands and skills; see [`opencode-v2/README.md`](opencode-v2/README.md) |
 | Gemini CLI | `./install.sh --profile minimal --target gemini` | Project-local `.gemini/` config |
 | Zed | `./install.sh --profile minimal --target zed` | Project-local `.zed/` adapter |
 | Antigravity | `./install.sh --profile minimal --target antigravity` | See the [Antigravity guide](docs/ANTIGRAVITY-GUIDE.md) |
@@ -1627,6 +1628,8 @@ The adapter writes ECC-managed files under `.zed/` and keeps BYOK/OpenRouter cre
 
 <details>
 <summary><strong>OpenCode support in depth</strong></summary>
+
+This section covers OpenCode 1.x. OpenCode 2.x replaced the plugin API and does not load `.opencode/`; for 2.x use [`opencode-v2/`](opencode-v2/README.md).
 
 ECC provides a beta OpenCode plugin integration with instructions, a catalog subset, commands, custom tools, and hook events. It does not provide feature parity with Claude Code. The reference config inherits the user's OpenCode model selection instead of pinning a provider-specific model.
 

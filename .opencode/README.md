@@ -5,6 +5,9 @@
 
 ECC plugin for OpenCode - agents, commands, hooks, and skills.
 
+> This directory targets OpenCode 1.x. OpenCode 2.x uses a new plugin API and will not load it;
+> use [`opencode-v2/`](../opencode-v2/README.md) instead.
+
 ## Installation
 
 ## Installation Overview
