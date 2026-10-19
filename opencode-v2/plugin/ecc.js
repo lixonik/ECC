@@ -6,6 +6,7 @@ import { emptyOutcome, interpretHookResult, mergeOutcomes } from '../lib/hook-pr
 import { loadHookManifest, selectHookCommands } from '../lib/hooks-manifest.js';
 import { configuredShell, shellToolNameFor } from '../lib/opencode-config.js';
 import { runHookProcess } from '../lib/hook-runner.js';
+import { createRuleTracker, loadRuleSets } from '../lib/rules.js';
 import { applySkillCatalog, hiddenSkillsNote, loadEccSkills } from '../lib/skills.js';
 import { CODE_MODE_TOOL, fromClaudeInput, toClaudeCalls, toClaudeResponse } from '../lib/tool-translate.js';
 import { createLogger } from '../lib/logger.js';
@@ -58,14 +59,17 @@ export async function setupEcc(ctx, options = {}) {
     ...(options.context === false ? [] : [eccNote(root)]),
     ...(catalog.hidden.length > 0 ? [hiddenSkillsNote(catalog.hidden)] : []),
   ];
+  const rules = await registerRules(ctx, { root, projectDir, sets: options.rules, logger, shellToolName: shellTool.name });
   const pushAmbient = event => {
     for (const text of ambient) event.system.push({ type: 'text', text });
+    const ruleText = rules?.textFor(event.sessionID);
+    if (ruleText) event.system.push({ type: 'text', text: ruleText });
   };
 
   if (!hooksActive) {
     const reason = hookOptions.enabled === false ? 'disabled by plugin options' : `disabled by environment (ECC_HOOKS_ENABLED=${baseEnv.ECC_HOOKS_ENABLED ?? 'unset'})`;
     logger.info(`ECC hooks inactive for ${projectDir}: ${reason}`);
-    if (ambient.length > 0) await ctx.session.hook('context', pushAmbient);
+    if (ambient.length > 0 || rules) await ctx.session.hook('context', pushAmbient);
     return undefined;
   }
 
@@ -482,6 +486,24 @@ function reportOutcome(logger, eventName, entryId, outcome) {
 function defaultStateDir() {
   const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
   return path.join(base, 'ecc-opencode');
+}
+
+async function registerRules(ctx, { root, projectDir, sets, logger, shellToolName }) {
+  if (!Array.isArray(sets) || sets.length === 0) return null;
+  const { rules, missing } = loadRuleSets(root, sets);
+  for (const set of missing) logger.warn(`rule set ${set} not found in ECC rules/`);
+  if (rules.length === 0) return null;
+  const tracker = createRuleTracker(rules, projectDir);
+  const env = { projectDir, shellToolName, mcpName: () => null };
+  await ctx.tool.hook('execute.before', event => {
+    const filePaths = toClaudeCalls(event.tool, event.input, env)
+      .flatMap(call => [call.input?.file_path, call.input?.new_file_path, call.input?.notebook_path])
+      .filter(value => typeof value === 'string' && value);
+    const activated = tracker.touch(event.sessionID, filePaths);
+    if (activated.length > 0) logger.info(`rules activated for ${event.sessionID}: ${activated.join(', ')}`);
+  });
+  logger.info(`ECC rules loaded: ${rules.length} from ${sets.join(', ')}`);
+  return tracker;
 }
 
 const installSyncs = new Map();

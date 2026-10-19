@@ -29,6 +29,7 @@ async function main() {
   const runner = await load('lib/hook-runner.js');
   const logging = await load('lib/logger.js');
   const transcriptLib = await load('lib/transcript.js');
+  const rulesLib = await load('lib/rules.js');
   const results = [];
   const projectDir = path.resolve(os.tmpdir(), 'ecc-project');
   const env = { projectDir, shellToolName: () => 'Bash', mcpName: id => (id === 'context7_query-docs' ? 'mcp__context7__query-docs' : null) };
@@ -233,6 +234,32 @@ async function main() {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  }));
+
+  results.push(await test('rule globs follow gitignore-style ** semantics', () => {
+    const cases = [
+      ['**/*.component.ts', 'src/app/a.component.ts', true],
+      ['**/*.component.ts', 'a.component.ts', true],
+      ['**/*.component.ts', 'a.component.tsx', false],
+      ['**/ohosTest/**', 'entry/src/ohosTest/x/y.ets', true],
+      ['**/server/**/*.ts', 'server/api/x.ts', true],
+      ['**/server/**/*.ts', 'serverx/x.ts', false],
+      ['**/appsettings*.json', 'web/appsettings.Development.json', true],
+      ['**/use-*.ts', 'hooks/user.ts', false],
+      ['src/*.ts', 'src/a.ts', true],
+      ['src/*.ts', 'x/src/a.ts', false],
+      ['**/*.{ts,js}', 'a/b.js', true],
+    ];
+    for (const [glob, file, expected] of cases) assert.strictEqual(rulesLib.globToRegExp(glob).test(file), expected, `${glob} vs ${file}`);
+  }));
+
+  results.push(await test('every ECC rule set loads with parseable paths', () => {
+    const sets = rulesLib.availableRuleSets(repoRoot);
+    assert.ok(sets.includes('common') && sets.includes('angular'));
+    const { rules, missing } = rulesLib.loadRuleSets(repoRoot, sets);
+    assert.deepStrictEqual(missing, []);
+    assert.ok(rules.filter(rule => rule.id.startsWith('common/')).every(rule => rule.paths.length === 0));
+    assert.ok(rules.filter(rule => !rule.id.startsWith('common/')).every(rule => rule.paths.length > 0 && rule.content.length > 0));
   }));
 
   results.push(await test('every ECC skill loads as an OpenCode skill keyed by its directory', () => {

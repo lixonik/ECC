@@ -229,6 +229,20 @@ async function main() {
     assert.ok(!advertised.includes('security-review'));
   }));
 
+  results.push(await test('ECC rules follow Claude Code paths scoping per session', async () => {
+    const projectDir = createProject('rules');
+    const fake = await start(projectDir, { hooks: false, rules: ['common', 'angular'] });
+    const contextOf = async sessionID => (await trigger(fake.hooks, 'session.context', { sessionID, agent: 'build', system: [], messages: [], tools: {}, options: {} }))
+      .system.map(part => part.text).join('\n');
+    const before = await contextOf('ses_rules');
+    assert.ok(before.includes('<rule id="common/coding-style">'));
+    assert.ok(!before.includes('<rule id="angular/'));
+    await trigger(fake.hooks, 'tool.execute.before', toolEvent('read', { path: 'src/app/user.component.ts' }, { sessionID: 'ses_rules' }));
+    const after = await contextOf('ses_rules');
+    assert.ok(after.includes('<rule id="angular/coding-style">'));
+    assert.ok(!(await contextOf('ses_other')).includes('<rule id="angular/'), 'activation is per session');
+  }));
+
   results.push(await test('plugin startup syncs the install it was loaded from', async () => {
     const installer = await import(pathToFileURL(path.join(repoRoot, 'opencode-v2', 'install.js')).href);
     const { scheduleInstallSync } = await import(pathToFileURL(path.join(repoRoot, 'opencode-v2', 'plugin', 'ecc.js')).href);

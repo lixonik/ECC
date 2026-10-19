@@ -168,6 +168,12 @@ async function main() {
     assert.ok(entry.includes('"autoSync": false'));
   })));
 
+  results.push(await test('rule sets are validated and passed to the plugin', () => withTarget(async (configDir, options) => {
+    assert.throws(() => installer.install(options({ rules: ['common', 'angluar'] }), quiet), /Unknown rule set\(s\): angluar/);
+    installer.install(options({ rules: ['common', 'typescript', 'angular'] }), quiet);
+    assert.ok(fs.readFileSync(path.join(configDir, 'plugins', 'ecc', 'index.js'), 'utf8').includes('"angular"'));
+  })));
+
   results.push(await test('project scope targets <project>/.opencode', () => {
     const target = installer.resolveTargetDir({ scope: 'project', project: path.join(os.tmpdir(), 'demo') });
     assert.strictEqual(target, path.join(os.tmpdir(), 'demo', '.opencode'));

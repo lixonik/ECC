@@ -68,6 +68,7 @@ node opencode-v2/install.js uninstall
 | `--skills <ids>` / `--no-skills` | Register only some ECC skills, or none |
 | `--skill-catalog full\|compact\|<ids>` | Which skills are described in the system prompt. `full` (default) lists all, like Claude Code (~125k characters). `compact` describes only `ecc-guide` and lists the other ids in one line (~7k characters); every skill still loads with the `skill` tool |
 | `--no-context` | Do not add the short ECC tool-mapping note to the system prompt |
+| `--rules <sets>` | Apply ECC rule sets from `rules/`, for example `common,typescript,angular` (see below). Off by default |
 | `--node <path>` | Node.js executable for hook scripts (default `node` on `PATH`, or `$ECC_NODE`) |
 | `--llm-summary` | Allow PreCompact/SessionEnd hooks to call the `claude` CLI for summaries (off by default) |
 | `--data-home <dir>` | `ECC_AGENT_DATA_HOME` for hooks and shells (default: ECC's own default, `~/.claude`) |
@@ -121,6 +122,14 @@ Logs and transcript mirrors live in `$XDG_STATE_HOME/ecc-opencode` (default
 `~/.local/state/ecc-opencode`). Set `ECC_OPENCODE_DEBUG=1` to log every OpenCode event the
 plugin receives. ECC's own data (sessions, instincts, metrics) stays where ECC keeps it, so the
 paths in ECC commands and skills remain correct.
+
+## Rules
+
+The Claude Code plugin cannot ship ECC's `rules/`; in Claude Code they are installed into
+`.claude/rules` separately. `--rules` brings them to OpenCode with the same scoping: a rule
+without `paths` (all of `common/`) applies to every session, and a rule with `paths` (for
+example `angular/` on `**/*.component.ts`) joins a session's system prompt once that session
+reads or edits a matching file. `common` alone is about 19k characters.
 
 ## Windows
 

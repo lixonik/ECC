@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BUILTIN_AGENT_IDS, BUILTIN_COMMAND_NAMES, convertAgent, convertCommand } from './lib/convert.js';
 import { globalConfigDir } from './lib/opencode-config.js';
+import { availableRuleSets } from './lib/rules.js';
 
 const ECC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MANIFEST_NAME = 'ecc-opencode-v2.install.json';
@@ -33,6 +34,8 @@ Content:
                              described in the system prompt; the rest load by id on demand
   --no-skills                do not register ECC skills
   --no-context               do not inject the ECC tool-mapping note
+  --rules <sets>             ECC rule sets to apply, e.g. common,typescript,angular; rules with
+                             paths apply once a matching file is read or edited (Claude Code semantics)
   --data-home <dir>          ECC_AGENT_DATA_HOME for hooks and shells (default: ~/.claude)
   --no-auto-sync             do not refresh generated agents and commands when OpenCode starts
 
@@ -54,6 +57,7 @@ const VALUE_FLAGS = Object.freeze({
   '--node': (options, value) => { options.node = value; },
   '--model-map': (options, value) => { options.modelMap = parseModelMap(value); },
   '--skills': (options, value) => { options.skills = splitList(value); },
+  '--rules': (options, value) => { options.rules = splitList(value); },
   '--skill-catalog': (options, value) => { options.skillCatalog = ['full', 'compact'].includes(value) ? value : splitList(value); },
   '--data-home': (options, value) => { options.dataHome = value; },
 });
@@ -124,6 +128,7 @@ export function pluginOptionsFrom(options, root = ECC_ROOT) {
     llmSummary: options.llmSummary,
     dataHome: options.dataHome ? path.resolve(options.dataHome) : undefined,
     autoSync: options.autoSync === false ? false : undefined,
+    rules: Array.isArray(options.rules) && options.rules.length > 0 ? options.rules : undefined,
   });
 }
 
@@ -173,7 +178,7 @@ function currentHash(file) {
 
 const INSTALL_OPTION_KEYS = Object.freeze([
   'hooks', 'profile', 'disabledHooks', 'shell', 'node', 'llmSummary', 'modelMap',
-  'skills', 'skillCatalog', 'context', 'dataHome', 'autoSync',
+  'skills', 'skillCatalog', 'context', 'dataHome', 'autoSync', 'rules',
 ]);
 
 function installOptionsOf(options) {
@@ -187,6 +192,10 @@ function skipReason(existing, recorded) {
 }
 
 export function install(options, { root = ECC_ROOT, log = console.log } = {}) {
+  const unknownRules = (options.rules ?? []).filter(set => !availableRuleSets(root).includes(set));
+  if (unknownRules.length > 0) {
+    throw new Error(`Unknown rule set(s): ${unknownRules.join(', ')}. Available: ${availableRuleSets(root).join(', ')}`);
+  }
   const targetDir = resolveTargetDir(options);
   const previous = readManifest(targetDir);
   const owned = new Map(Object.entries(previous?.files ?? {}));
@@ -348,7 +357,13 @@ function main() {
     return;
   }
   const actions = { install, uninstall, status };
-  const result = actions[options.action](options);
+  let result;
+  try {
+    result = actions[options.action](options);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(2);
+  }
   if (result && Array.isArray(result.skipped) && result.skipped.length > 0) process.exitCode = 1;
 }
 
