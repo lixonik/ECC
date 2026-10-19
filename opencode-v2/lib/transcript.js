@@ -2,6 +2,33 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
+export const DEFAULT_RETENTION_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function pruneTranscripts(directory, retentionDays = DEFAULT_RETENTION_DAYS, now = Date.now()) {
+  if (!(retentionDays > 0)) return 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+    const file = path.join(directory, entry.name);
+    try {
+      if (now - fs.statSync(file).mtimeMs > retentionDays * DAY_MS) {
+        fs.rmSync(file, { force: true });
+        removed += 1;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return removed;
+}
+
 export function createTranscriptMirror(directory, { cwd } = {}) {
   const lastUuid = new Map();
   let prepared = false;

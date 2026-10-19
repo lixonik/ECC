@@ -27,6 +27,8 @@ async function main() {
   const config = await load('lib/opencode-config.js');
   const { loadEccSkills } = await load('lib/skills.js');
   const runner = await load('lib/hook-runner.js');
+  const logging = await load('lib/logger.js');
+  const transcriptLib = await load('lib/transcript.js');
   const results = [];
   const projectDir = path.resolve(os.tmpdir(), 'ecc-project');
   const env = { projectDir, shellToolName: () => 'Bash', mcpName: id => (id === 'context7_query-docs' ? 'mcp__context7__query-docs' : null) };
@@ -199,6 +201,38 @@ async function main() {
     const script = "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.word);process.stderr.write('err');process.exit(2)})";
     const result = await runner.runHookProcess({ argv: ['node', '-e', script], input: { word: 'ping' }, env: process.env, cwd: os.tmpdir(), timeoutMs: 10000, nodePath: process.execPath });
     assert.deepStrictEqual({ exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, timedOut: result.timedOut }, { exitCode: 2, stdout: 'ping', stderr: 'err', timedOut: false });
+  }));
+
+  results.push(await test('bridge log rotates once it passes the size cap', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-oc2-log-'));
+    try {
+      const file = path.join(dir, 'bridge.log');
+      fs.writeFileSync(file, 'x'.repeat(2048));
+      const logger = logging.createLogger(file, { maxBytes: 1024 });
+      logger.info('fresh line');
+      assert.ok(fs.readFileSync(`${file}.1`, 'utf8').startsWith('xxxx'));
+      assert.ok(/INFO fresh line\n$/.test(fs.readFileSync(file, 'utf8')));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }));
+
+  results.push(await test('old transcript mirrors are pruned and recent ones kept', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-oc2-mirror-'));
+    try {
+      const old = path.join(dir, 'ses_old.jsonl');
+      const recent = path.join(dir, 'ses_recent.jsonl');
+      const other = path.join(dir, 'notes.txt');
+      for (const file of [old, recent, other]) fs.writeFileSync(file, '{}\n');
+      const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+      fs.utimesSync(old, fortyDaysAgo, fortyDaysAgo);
+      fs.utimesSync(other, fortyDaysAgo, fortyDaysAgo);
+      assert.strictEqual(transcriptLib.pruneTranscripts(dir, 30), 1);
+      assert.ok(!fs.existsSync(old) && fs.existsSync(recent) && fs.existsSync(other));
+      assert.strictEqual(transcriptLib.pruneTranscripts(path.join(dir, 'missing'), 30), 0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }));
 
   results.push(await test('every ECC skill loads as an OpenCode skill keyed by its directory', () => {

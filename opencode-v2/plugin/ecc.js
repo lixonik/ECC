@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -9,7 +8,8 @@ import { configuredShell, shellToolNameFor } from '../lib/opencode-config.js';
 import { runHookProcess } from '../lib/hook-runner.js';
 import { applySkillCatalog, hiddenSkillsNote, loadEccSkills } from '../lib/skills.js';
 import { CODE_MODE_TOOL, fromClaudeInput, toClaudeCalls, toClaudeResponse } from '../lib/tool-translate.js';
-import { createTranscriptMirror } from '../lib/transcript.js';
+import { createLogger } from '../lib/logger.js';
+import { DEFAULT_RETENTION_DAYS, createTranscriptMirror, pruneTranscripts } from '../lib/transcript.js';
 
 export const PLUGIN_ID = 'ecc';
 export const FEEDBACK_TAG = 'ecc-hook-feedback';
@@ -68,7 +68,10 @@ export async function setupEcc(ctx, options = {}) {
   }
 
   const manifest = loadHookManifest(root);
-  const transcript = createTranscriptMirror(path.resolve(options.transcriptDir ?? path.join(stateDir, 'transcripts')), { cwd: projectDir });
+  const transcriptDir = path.resolve(options.transcriptDir ?? path.join(stateDir, 'transcripts'));
+  const pruned = pruneTranscripts(transcriptDir, retentionDays(options));
+  if (pruned > 0) logger.info(`pruned ${pruned} transcript mirror(s) older than ${retentionDays(options)} days`);
+  const transcript = createTranscriptMirror(transcriptDir, { cwd: projectDir });
   const isEnabled = (hookId, profiles) => hookFlags.isHookEnabled(hookId, { env: baseEnv, profiles });
   const nodePath = options.node ?? process.env.ECC_NODE ?? 'node';
   const asyncRuns = new Set();
@@ -479,18 +482,7 @@ function defaultStateDir() {
   return path.join(base, 'ecc-opencode');
 }
 
-function createLogger(file) {
-  const write = (level, message) => {
-    try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.appendFileSync(file, `${new Date().toISOString()} ${level} ${message.replace(/\r?\n/g, '\n    ')}\n`);
-    } catch {
-      return;
-    }
-  };
-  return {
-    info: message => write('INFO', message),
-    warn: message => write('WARN', message),
-    error: message => write('ERROR', message),
-  };
+function retentionDays(options) {
+  const configured = Number(options.transcriptRetentionDays ?? process.env.ECC_SESSION_RETENTION_DAYS);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_RETENTION_DAYS;
 }
