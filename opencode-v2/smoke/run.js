@@ -21,13 +21,59 @@ const SCENARIOS = {
       { tool: 'shell', args: { command: SHELL_PROBE } },
       { text: 'Shell step finished.' },
     ],
-    check: ({ requests, transcripts, log }) => {
+    check: ({ requests, transcripts, log, manifestUnchanged }) => {
       expect(requests.some(request => systemOf(request).includes('ECC (Everything Claude Code) is active')), 'ECC note reaches the system prompt');
       expect(toolResults(requests).some(text => text.includes('ecc-shell-ok')), 'shell output reaches the model');
       expect(transcripts.some(line => line.message?.content?.[0]?.type === 'tool_use'), 'transcript mirror records the tool call');
       expect(log.includes('ECC hook bridge active'), 'bridge reports activation in its log');
       expect(log.includes('SessionStart session:start'), 'SessionStart hooks ran');
       expect(requests.some(request => systemOf(request).includes('<id>tdd-workflow</id>')), 'ECC skills are offered to the model');
+      expect(manifestUnchanged && !log.includes('auto-sync refreshed'), 'startup auto-sync writes nothing when sources are unchanged');
+    },
+  },
+  'compact-catalog': {
+    env: GATEGUARD_OFF,
+    install: { skillCatalog: 'compact' },
+    prompt: 'Load the TDD skill by id.',
+    steps: [
+      { tool: 'skill', args: { id: 'tdd-workflow' } },
+      { text: 'Compact catalog step finished.' },
+    ],
+    check: ({ requests }) => {
+      const main = requests.find(request => toolNames(request).includes('skill'));
+      const system = main ? systemOf(main) : '';
+      expect(main && !system.includes('<id>tdd-workflow</id>') && system.includes('<id>ecc-guide</id>'), 'compact catalog describes only ecc-guide');
+      expect(system.includes('More ECC skills are installed') && system.includes('tdd-workflow'), 'other skills are listed by id');
+      expect(system.length < 60000, `system prompt shrinks (${system.length} characters)`);
+      expect(toolResults(requests).some(text => /test-driven|TDD/i.test(text)), 'a skill outside the catalog still loads by id');
+    },
+  },
+  'rules-angular': {
+    env: GATEGUARD_OFF,
+    install: { rules: ['common', 'angular'] },
+    prompt: 'Read the component.',
+    files: { 'src/app/user.component.ts': 'export class UserComponent {}\n' },
+    steps: [
+      { tool: 'read', args: { path: 'src/app/user.component.ts' } },
+      { text: 'Rules step finished.' },
+    ],
+    check: ({ requests }) => {
+      const main = requests.filter(request => toolNames(request).length > 0);
+      expect(main.length >= 2, 'two main-loop requests were made');
+      expect(main[0] && systemOf(main[0]).includes('<rule id="common/coding-style">') && !systemOf(main[0]).includes('<rule id="angular/'), 'common rules apply from the start, Angular rules wait');
+      expect(main[1] && systemOf(main[1]).includes('<rule id="angular/coding-style">'), 'reading a component activates the Angular rules');
+    },
+  },
+  'command-kotlin': {
+    env: GATEGUARD_OFF,
+    steps: [{ text: 'Kotlin command step finished.' }],
+    server: async ({ call, waitForRequests }) => {
+      await call('POST', '/api/session/:id/command', { name: 'kotlin-review', text: '[[scenario:command-kotlin]] src/Main.kt' });
+      await waitForRequests(requests => requests.some(request => toolNames(request).length > 0));
+    },
+    check: ({ requests }) => {
+      const text = requests.flatMap(userTexts).find(item => item.includes('[[scenario:command-kotlin]]')) ?? '';
+      expect(text.includes('Null Safety Review') && text.includes('platform type handling'), '/kotlin-review expands without running its prose as shell');
     },
   },
   'gateguard-flow': {
@@ -338,7 +384,10 @@ async function main() {
     },
   }, null, 2)}\n`);
 
-  install({ action: 'install', scope: 'global', configDir, hooks: true, skills: true, context: true, force: false, dryRun: false, disabledHooks: [], modelMap: {}, shell: 'Bash' }, { root: ECC_ROOT, log: () => {} });
+  const baseInstall = { action: 'install', scope: 'global', configDir, hooks: true, skills: true, context: true, force: false, dryRun: false, disabledHooks: [], modelMap: {}, shell: 'Bash' };
+  const installWith = extra => install({ ...baseInstall, ...extra }, { root: ECC_ROOT, log: () => {} });
+  const manifestFile = path.join(configDir, 'ecc-opencode-v2.install.json');
+  installWith({});
 
   const env = {
     ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(ECC_|CLAUDE)/i.test(key))),
@@ -361,6 +410,8 @@ async function main() {
       fs.mkdirSync(path.dirname(path.join(projectDir, relative)), { recursive: true });
       fs.writeFileSync(path.join(projectDir, relative), content);
     }
+    if (scenario.install) installWith(scenario.install);
+    const manifestBefore = fs.statSync(manifestFile).mtimeMs;
     const before = provider.requests.length;
     const stateDir = path.join(dirs.state, 'ecc-opencode');
     const logFile = path.join(stateDir, 'ecc-opencode.log');
@@ -375,7 +426,9 @@ async function main() {
     const log = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').slice(logOffset) : '';
     console.log(`    exit ${result.code}, ${requests.length} model requests`);
     if (result.code !== 0) console.log(result.stderr.split('\n').slice(-15).map(line => `      ${line}`).join('\n'));
-    scenario.check({ requests, transcripts: readJsonLines(path.join(stateDir, 'transcripts')), log, projectDir, result });
+    const manifestUnchanged = fs.statSync(manifestFile).mtimeMs === manifestBefore;
+    if (scenario.install) installWith({});
+    scenario.check({ requests, transcripts: readJsonLines(path.join(stateDir, 'transcripts')), log, projectDir, result, manifestUnchanged });
   }
 
   await provider.close();
