@@ -1,0 +1,15 @@
+{
+  "name": "ecc-opencode-v2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ECC for OpenCode V2: Claude Code hook bridge, ECC agents, commands and skills",
+  "type": "module",
+  "main": "plugin/ecc.js",
+  "exports": {
+    ".": "./plugin/ecc.js",
+    "./plugin": "./plugin/ecc.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

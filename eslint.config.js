@@ -32,6 +32,12 @@ module.exports = [
         }
     },
     {
+        files: ['opencode-v2/**/*.js'],
+        languageOptions: {
+            sourceType: 'module'
+        }
+    },
+    {
         files: ['**/*.mjs'],
         languageOptions: {
             sourceType: 'module'
