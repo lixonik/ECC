@@ -170,6 +170,7 @@ node opencode-v2/smoke/run.js --opencode "$(command -v opencode)"
 ```
 
 It covers GateGuard, config protection, hookify bash/file/prompt/stop rules, patch
-translation, compaction, a read-only ECC subagent, skill loading, slash command expansion and
-SessionEnd. Unit and integration tests that need no OpenCode binary run with the rest of the
+translation, compaction, a read-only ECC subagent, skill loading, the compact skill catalog,
+path-scoped rules, slash command expansion (including commands that must not run shell
+interpolation), startup auto-sync and SessionEnd. Unit and integration tests that need no OpenCode binary run with the rest of the
 repository tests: `node tests/run-all.js opencode-v2`.
