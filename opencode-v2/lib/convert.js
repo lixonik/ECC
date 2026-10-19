@@ -36,6 +36,19 @@ const NAMED_COLORS = Object.freeze({
 });
 
 const MODEL_TIERS = Object.freeze(['opus', 'sonnet', 'haiku']);
+const SHELL_INTERPOLATION_START = /!`/g;
+
+export function allowsBash(allowedTools) {
+  return (parseToolList(allowedTools) ?? []).some(tool => /^Bash(?:\(|$)/.test(tool));
+}
+
+export function guardShellInterpolation(body, allowedTools) {
+  const bashAllowed = allowsBash(allowedTools);
+  return body.replace(SHELL_INTERPOLATION_START, (match, offset) => {
+    const previous = offset === 0 ? '\n' : body[offset - 1];
+    return bashAllowed && /\s/.test(previous) ? match : '! `';
+  });
+}
 
 export function parseToolList(value) {
   if (value === undefined || value === null) return null;
@@ -95,7 +108,7 @@ export function convertCommand(source, options = {}) {
     model: resolveModel(data.model, options.modelMap),
     subagent,
   };
-  return stringifyFrontmatter(frontmatter) + normalizeBody(body);
+  return stringifyFrontmatter(frontmatter) + normalizeBody(guardShellInterpolation(body, data['allowed-tools']));
 }
 
 function normalizeBody(body) {

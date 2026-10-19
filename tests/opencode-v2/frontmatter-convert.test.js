@@ -108,6 +108,26 @@ async function main() {
     assert.ok(body.includes('$ARGUMENTS'));
   }));
 
+  results.push(await test('converted commands never trigger OpenCode shell interpolation by accident', () => {
+    const interpolation = /!`([^`]+)`/g;
+    for (const file of fs.readdirSync(path.join(repoRoot, 'commands')).filter(f => f.endsWith('.md'))) {
+      const source = fs.readFileSync(path.join(repoRoot, 'commands', file), 'utf8');
+      const { data } = splitFrontmatter(source);
+      if (convert.allowsBash(data['allowed-tools'])) continue;
+      assert.deepStrictEqual([...convert.convertCommand(source).matchAll(interpolation)].map(match => match[0]), [], file);
+    }
+    const kotlin = convert.convertCommand(fs.readFileSync(path.join(repoRoot, 'commands', 'kotlin-review.md'), 'utf8'));
+    assert.ok(kotlin.includes('Analyze `!! ` usage'));
+  }));
+
+  results.push(await test('intentional interpolation survives only when the command allows Bash', () => {
+    const body = 'Status: !`git status`\nInline `!!` and assert_eq!`x`\n';
+    assert.strictEqual(convert.guardShellInterpolation(body, ['Bash', 'Read']), 'Status: !`git status`\nInline `!! ` and assert_eq! `x`\n');
+    assert.ok(convert.guardShellInterpolation(body, 'Bash(git status:*)').startsWith('Status: !`git status`'));
+    assert.ok(convert.guardShellInterpolation(body, ['Read']).startsWith('Status: ! `git status`'));
+    assert.ok(!convert.guardShellInterpolation(body, undefined).includes('!`'));
+  }));
+
   results.push(await test('no ECC agent or command collides with OpenCode built-ins', () => {
     const agents = fs.readdirSync(path.join(repoRoot, 'agents')).map(f => path.basename(f, '.md'));
     const commands = fs.readdirSync(path.join(repoRoot, 'commands')).map(f => path.basename(f, '.md'));
