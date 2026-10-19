@@ -43,6 +43,8 @@ export async function setupEcc(ctx, options = {}) {
   const sessions = new Map();
   const startedAt = Date.now();
 
+  if (options.installDir && options.autoSync !== false) scheduleInstallSync(root, path.resolve(options.installDir), logger);
+
   const catalog = options.skills === false
     ? { hidden: [] }
     : await registerSkills(ctx, root, logger, options.skills, options.skillCatalog);
@@ -480,6 +482,27 @@ function reportOutcome(logger, eventName, entryId, outcome) {
 function defaultStateDir() {
   const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
   return path.join(base, 'ecc-opencode');
+}
+
+const installSyncs = new Map();
+
+export function scheduleInstallSync(root, installDir, logger) {
+  if (!installSyncs.has(installDir)) {
+    installSyncs.set(installDir, new Promise(resolve => setTimeout(resolve, 0))
+      .then(() => import('../install.js'))
+      .then(({ syncInstall }) => {
+        const report = syncInstall(installDir, { root });
+        if (report && report.created + report.updated + report.removed > 0) {
+          logger.info(`auto-sync refreshed ECC files in ${installDir}: ${report.created} created, ${report.updated} updated, ${report.removed} removed`);
+        }
+        return report;
+      })
+      .catch(error => {
+        logger.warn(`auto-sync failed for ${installDir}: ${error.message}`);
+        return null;
+      }));
+  }
+  return installSyncs.get(installDir);
 }
 
 function retentionDays(options) {

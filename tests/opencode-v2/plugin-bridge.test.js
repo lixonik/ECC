@@ -229,6 +229,20 @@ async function main() {
     assert.ok(!advertised.includes('security-review'));
   }));
 
+  results.push(await test('plugin startup syncs the install it was loaded from', async () => {
+    const installer = await import(pathToFileURL(path.join(repoRoot, 'opencode-v2', 'install.js')).href);
+    const { scheduleInstallSync } = await import(pathToFileURL(path.join(repoRoot, 'opencode-v2', 'plugin', 'ecc.js')).href);
+    const configDir = path.join(sandbox, 'synced-config');
+    installer.install({ ...installer.parseArgs([]), configDir }, { log: () => {} });
+    fs.rmSync(path.join(configDir, 'ecc-opencode-v2.install.json'));
+    fs.writeFileSync(path.join(configDir, 'ecc-opencode-v2.install.json'), JSON.stringify({ files: {}, installOptions: {} }));
+    fs.rmSync(path.join(configDir, 'agents', 'planner.md'));
+    await start(createProject('sync'), { hooks: false, installDir: configDir });
+    const report = await scheduleInstallSync(path.resolve(repoRoot), path.resolve(configDir), { info: () => {}, warn: () => {} });
+    assert.ok(report && report.created >= 1, 'missing generated agent is recreated when the manifest does not record it');
+    assert.ok(fs.existsSync(path.join(configDir, 'agents', 'planner.md')));
+  }));
+
   for (const cleanup of cleanups) await cleanup();
   fs.rmSync(sandbox, { recursive: true, force: true });
   const failed = results.filter(ok => !ok).length;

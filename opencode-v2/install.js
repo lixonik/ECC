@@ -34,6 +34,7 @@ Content:
   --no-skills                do not register ECC skills
   --no-context               do not inject the ECC tool-mapping note
   --data-home <dir>          ECC_AGENT_DATA_HOME for hooks and shells (default: ~/.claude)
+  --no-auto-sync             do not refresh generated agents and commands when OpenCode starts
 
 Safety:
   --dry-run                  print the plan without writing
@@ -61,6 +62,7 @@ const SWITCH_FLAGS = Object.freeze({
   '--llm-summary': options => { options.llmSummary = true; },
   '--no-skills': options => { options.skills = false; },
   '--no-context': options => { options.context = false; },
+  '--no-auto-sync': options => { options.autoSync = false; },
   '--dry-run': options => { options.dryRun = true; },
   '--force': options => { options.force = true; },
   '--help': options => { options.action = 'help'; },
@@ -108,9 +110,9 @@ export function resolveTargetDir(options, env = process.env) {
   return globalConfigDir(env);
 }
 
-export function pluginOptionsFrom(options) {
+export function pluginOptionsFrom(options, root = ECC_ROOT) {
   return dropUndefined({
-    root: ECC_ROOT,
+    root,
     hooks: options.hooks
       ? dropUndefined({ enabled: true, profile: options.profile, disabled: options.disabledHooks.length > 0 ? options.disabledHooks : undefined })
       : false,
@@ -121,10 +123,11 @@ export function pluginOptionsFrom(options) {
     node: options.node,
     llmSummary: options.llmSummary,
     dataHome: options.dataHome ? path.resolve(options.dataHome) : undefined,
+    autoSync: options.autoSync === false ? false : undefined,
   });
 }
 
-export function planFiles(options, root = ECC_ROOT) {
+export function planFiles(options, root = ECC_ROOT, targetDir = undefined) {
   const files = new Map();
   const warnings = [];
   for (const file of fs.readdirSync(path.join(root, 'agents')).filter(name => name.endsWith('.md')).sort()) {
@@ -144,7 +147,8 @@ export function planFiles(options, root = ECC_ROOT) {
     files.set(path.join('commands', file), convertCommand(fs.readFileSync(path.join(root, 'commands', file), 'utf8'), options));
   }
   files.set(path.join(PLUGIN_DIR, 'package.json'), `${JSON.stringify({ name: 'ecc-opencode-v2-entry', private: true, type: 'module', main: 'index.js' }, null, 2)}\n`);
-  files.set(path.join(PLUGIN_DIR, 'index.js'), pluginEntrySource(pluginOptionsFrom(options), root));
+  const entryOptions = { ...pluginOptionsFrom(options, root), ...(targetDir && options.autoSync !== false ? { installDir: targetDir } : {}) };
+  files.set(path.join(PLUGIN_DIR, 'index.js'), pluginEntrySource(entryOptions, root));
   return { files, warnings };
 }
 
@@ -167,38 +171,78 @@ function currentHash(file) {
   return fs.existsSync(file) ? sha256(fs.readFileSync(file)) : null;
 }
 
+const INSTALL_OPTION_KEYS = Object.freeze([
+  'hooks', 'profile', 'disabledHooks', 'shell', 'node', 'llmSummary', 'modelMap',
+  'skills', 'skillCatalog', 'context', 'dataHome', 'autoSync',
+]);
+
+function installOptionsOf(options) {
+  return dropUndefined(Object.fromEntries(INSTALL_OPTION_KEYS.map(key => [key, options[key]])));
+}
+
+function skipReason(existing, recorded) {
+  if (existing === null) return 'deleted after install; use --force to restore';
+  if (recorded === undefined) return 'not created by ECC; use --force to overwrite';
+  return 'modified after install; use --force to overwrite';
+}
+
 export function install(options, { root = ECC_ROOT, log = console.log } = {}) {
   const targetDir = resolveTargetDir(options);
   const previous = readManifest(targetDir);
   const owned = new Map(Object.entries(previous?.files ?? {}));
-  const { files, warnings } = planFiles(options, root);
+  const { files, warnings } = planFiles(options, root, targetDir);
   const written = {};
   const report = { targetDir, created: 0, updated: 0, unchanged: 0, skipped: [], removed: 0, warnings };
 
   for (const [relative, content] of files) {
-    const absolute = path.join(targetDir, relative);
-    const existing = currentHash(absolute);
-    const next = sha256(content);
-    const recorded = owned.get(normalizeKey(relative));
-    if (existing === next) {
-      report.unchanged += 1;
-      written[normalizeKey(relative)] = next;
-      continue;
-    }
-    if (existing !== null && !options.force && (recorded === undefined || recorded !== existing)) {
-      report.skipped.push(`${relative} (${recorded === undefined ? 'not created by ECC' : 'modified after install'}; use --force to overwrite)`);
-      if (recorded !== undefined) written[normalizeKey(relative)] = recorded;
-      continue;
-    }
-    if (!options.dryRun) {
-      fs.mkdirSync(path.dirname(absolute), { recursive: true });
-      fs.writeFileSync(absolute, content);
-    }
-    if (existing === null) report.created += 1;
-    else report.updated += 1;
-    written[normalizeKey(relative)] = next;
+    const key = normalizeKey(relative);
+    const hash = reconcileFile({ targetDir, relative, content, recorded: owned.get(key), options, report });
+    if (hash) written[key] = hash;
   }
+  removeStaleFiles({ targetDir, owned, written, options, report });
 
+  const manifest = {
+    tool: 'ecc-opencode-v2',
+    eccRoot: root,
+    installedAt: previous?.installedAt,
+    options: pluginOptionsFrom(options, root),
+    installOptions: installOptionsOf(options),
+    files: written,
+  };
+  report.changed = report.created + report.updated + report.removed > 0
+    || !previous
+    || JSON.stringify({ ...previous, installedAt: undefined }) !== JSON.stringify({ ...manifest, installedAt: undefined });
+  if (!options.dryRun && report.changed) {
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(path.join(targetDir, MANIFEST_NAME), `${JSON.stringify({ ...manifest, installedAt: new Date().toISOString() }, null, 2)}\n`);
+  }
+  printReport(log, options.dryRun ? 'Dry run' : 'Installed', report);
+  return report;
+}
+
+function reconcileFile({ targetDir, relative, content, recorded, options, report }) {
+  const absolute = path.join(targetDir, relative);
+  const existing = currentHash(absolute);
+  const next = sha256(content);
+  if (existing === next) {
+    report.unchanged += 1;
+    return next;
+  }
+  const userChanged = existing === null ? recorded !== undefined : recorded === undefined || recorded !== existing;
+  if (userChanged && !options.force) {
+    report.skipped.push(`${relative} (${skipReason(existing, recorded)})`);
+    return recorded;
+  }
+  if (!options.dryRun) {
+    fs.mkdirSync(path.dirname(absolute), { recursive: true });
+    fs.writeFileSync(absolute, content);
+  }
+  if (existing === null) report.created += 1;
+  else report.updated += 1;
+  return next;
+}
+
+function removeStaleFiles({ targetDir, owned, written, options, report }) {
   for (const [relative, hash] of owned) {
     if (Object.hasOwn(written, relative)) continue;
     const absolute = path.join(targetDir, relative);
@@ -209,19 +253,13 @@ export function install(options, { root = ECC_ROOT, log = console.log } = {}) {
       report.skipped.push(`${relative} (stale but modified; left in place)`);
     }
   }
+}
 
-  if (!options.dryRun) {
-    fs.mkdirSync(targetDir, { recursive: true });
-    fs.writeFileSync(path.join(targetDir, MANIFEST_NAME), `${JSON.stringify({
-      tool: 'ecc-opencode-v2',
-      eccRoot: root,
-      installedAt: new Date().toISOString(),
-      options: pluginOptionsFrom(options),
-      files: written,
-    }, null, 2)}\n`);
-  }
-  printReport(log, options.dryRun ? 'Dry run' : 'Installed', report);
-  return report;
+export function syncInstall(targetDir, { root = ECC_ROOT, log = () => {} } = {}) {
+  const manifest = readManifest(targetDir);
+  if (!manifest) return null;
+  const options = { ...parseArgs([]), ...(manifest.installOptions ?? {}), configDir: targetDir, action: 'install', dryRun: false, force: false };
+  return install(options, { root, log });
 }
 
 export function uninstall(options, { log = console.log } = {}) {

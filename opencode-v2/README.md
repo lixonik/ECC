@@ -46,8 +46,10 @@ node opencode-v2/install.js --scope project --project path/to/project
 ```
 
 The plugin entry points at the clone by absolute path, so run the installer again if you move
-the clone. Re-run the same command after `git pull` to refresh agents and commands. Files you edited
-after install, and files the installer did not create, are left alone (`--force` overrides).
+the clone. After `git pull`, just restart OpenCode: on startup the plugin refreshes the generated
+agents and commands from the clone with the options you installed with (`--no-auto-sync` turns
+this off). Files you edited or deleted after install, and files the installer did not create, are
+left alone; `--force` on the installer overwrites or restores them.
 
 ```bash
 node opencode-v2/install.js status

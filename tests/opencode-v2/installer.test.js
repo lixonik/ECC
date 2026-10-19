@@ -105,6 +105,69 @@ async function main() {
     assert.strictEqual(installer.pluginOptionsFrom(installer.parseArgs(['--shell', 'auto'])).shell, undefined);
   }));
 
+  const withFakeRoot = async fn => {
+    const fakeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-oc2-root-'));
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-oc2-sync-'));
+    const agent = description => `---\nname: x\ndescription: ${description}\ntools: Read, Grep\nmodel: sonnet\n---\n\nBody\n`;
+    try {
+      fs.mkdirSync(path.join(fakeRoot, 'agents'));
+      fs.mkdirSync(path.join(fakeRoot, 'commands'));
+      fs.writeFileSync(path.join(fakeRoot, 'agents', 'alpha.md'), agent('first'));
+      fs.writeFileSync(path.join(fakeRoot, 'agents', 'beta.md'), agent('beta'));
+      fs.writeFileSync(path.join(fakeRoot, 'commands', 'go.md'), '---\ndescription: go\n---\nGo $ARGUMENTS\n');
+      await fn({ fakeRoot, configDir, agent });
+    } finally {
+      fs.rmSync(fakeRoot, { recursive: true, force: true });
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  };
+
+  results.push(await test('sync refreshes changed sources, adds new ones and drops removed ones', () => withFakeRoot(async ({ fakeRoot, configDir, agent }) => {
+    installer.install({ ...installer.parseArgs(['--profile', 'strict']), configDir }, { root: fakeRoot, log: () => {} });
+    const entry = fs.readFileSync(path.join(configDir, 'plugins', 'ecc', 'index.js'), 'utf8');
+    assert.ok(entry.includes('"installDir"'));
+    fs.writeFileSync(path.join(fakeRoot, 'agents', 'alpha.md'), agent('second'));
+    fs.writeFileSync(path.join(fakeRoot, 'agents', 'gamma.md'), agent('gamma'));
+    fs.rmSync(path.join(fakeRoot, 'agents', 'beta.md'));
+    const report = installer.syncInstall(configDir, { root: fakeRoot });
+    assert.deepStrictEqual([report.created, report.updated, report.removed], [1, 1, 1]);
+    assert.ok(fs.readFileSync(path.join(configDir, 'agents', 'alpha.md'), 'utf8').includes('second'));
+    assert.ok(!fs.existsSync(path.join(configDir, 'agents', 'beta.md')));
+    assert.ok(fs.readFileSync(path.join(configDir, 'plugins', 'ecc', 'index.js'), 'utf8').includes('"profile": "strict"'), 'sync keeps install options');
+  })));
+
+  results.push(await test('sync writes nothing when sources did not change', () => withFakeRoot(async ({ fakeRoot, configDir }) => {
+    installer.install({ ...installer.parseArgs([]), configDir }, { root: fakeRoot, log: () => {} });
+    const manifestFile = path.join(configDir, 'ecc-opencode-v2.install.json');
+    const before = fs.readFileSync(manifestFile, 'utf8');
+    const past = new Date(Date.now() - 60000);
+    fs.utimesSync(manifestFile, past, past);
+    const report = installer.syncInstall(configDir, { root: fakeRoot });
+    assert.strictEqual(report.changed, false);
+    assert.strictEqual(fs.readFileSync(manifestFile, 'utf8'), before);
+    assert.strictEqual(fs.statSync(manifestFile).mtimeMs, past.getTime());
+  })));
+
+  results.push(await test('files the user deleted or edited are not brought back by sync', () => withFakeRoot(async ({ fakeRoot, configDir, agent }) => {
+    installer.install({ ...installer.parseArgs([]), configDir }, { root: fakeRoot, log: () => {} });
+    fs.rmSync(path.join(configDir, 'agents', 'beta.md'));
+    fs.writeFileSync(path.join(configDir, 'agents', 'alpha.md'), 'mine\n');
+    fs.writeFileSync(path.join(fakeRoot, 'agents', 'alpha.md'), agent('upstream change'));
+    const report = installer.syncInstall(configDir, { root: fakeRoot });
+    assert.ok(!fs.existsSync(path.join(configDir, 'agents', 'beta.md')));
+    assert.strictEqual(fs.readFileSync(path.join(configDir, 'agents', 'alpha.md'), 'utf8'), 'mine\n');
+    assert.ok(report.skipped.some(line => line.includes('beta.md') && line.includes('deleted after install')));
+    installer.install({ ...installer.parseArgs(['--force']), configDir }, { root: fakeRoot, log: () => {} });
+    assert.ok(fs.existsSync(path.join(configDir, 'agents', 'beta.md')), '--force restores deleted files');
+  })));
+
+  results.push(await test('auto-sync can be turned off at install time', () => withFakeRoot(async ({ fakeRoot, configDir }) => {
+    installer.install({ ...installer.parseArgs(['--no-auto-sync']), configDir }, { root: fakeRoot, log: () => {} });
+    const entry = fs.readFileSync(path.join(configDir, 'plugins', 'ecc', 'index.js'), 'utf8');
+    assert.ok(!entry.includes('"installDir"'));
+    assert.ok(entry.includes('"autoSync": false'));
+  })));
+
   results.push(await test('project scope targets <project>/.opencode', () => {
     const target = installer.resolveTargetDir({ scope: 'project', project: path.join(os.tmpdir(), 'demo') });
     assert.strictEqual(target, path.join(os.tmpdir(), 'demo', '.opencode'));
