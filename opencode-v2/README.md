@@ -66,7 +66,8 @@ node opencode-v2/install.js uninstall
 | `--shell auto\|Bash\|PowerShell` | Tool name ECC hooks see for OpenCode's `shell` tool (see Windows below) |
 | `--model-map opus=p/m,sonnet=p/m,haiku=p/m` | Pin ECC agents' Claude tiers to your models. Without it agents inherit the session model |
 | `--skills <ids>` / `--no-skills` | Register only some ECC skills, or none |
-| `--skill-catalog full\|compact\|<ids>` | Which skills are described in the system prompt. `full` (default) lists all, like Claude Code (~125k characters). `compact` describes only `ecc-guide` and lists the other ids in one line (~7k characters); every skill still loads with the `skill` tool |
+| `--skill-catalog full\|auto\|compact\|<ids>` | Which skills are described in the system prompt (see Skill catalog below). `full` (default) lists all, like Claude Code (~125k characters) |
+| `--no-skill-suggestions` | Do not append per-prompt skill suggestions in non-`full` catalogs |
 | `--no-context` | Do not add the short ECC tool-mapping note to the system prompt |
 | `--rules <sets>` | Apply ECC rule sets from `rules/`, for example `common,typescript,angular` (see below). Off by default |
 | `--node <path>` | Node.js executable for hook scripts (default `node` on `PATH`, or `$ECC_NODE`) |
@@ -122,6 +123,27 @@ Logs and transcript mirrors live in `$XDG_STATE_HOME/ecc-opencode` (default
 `~/.local/state/ecc-opencode`). Set `ECC_OPENCODE_DEBUG=1` to log every OpenCode event the
 plugin receives. ECC's own data (sessions, instincts, metrics) stays where ECC keeps it, so the
 paths in ECC commands and skills remain correct.
+
+## Skill catalog
+
+What matters is that the right skill reaches the model: on a SkillsBench subset, having the
+relevant skill raised DeepSeek V4-Flash pass rates by 18-26 points, while how the skill was
+worded barely mattered ([arXiv:2605.31408](https://arxiv.org/abs/2605.31408)). Listing all 311
+skills is the blunt way to get there and costs every request ~125k characters of attention.
+
+- `full` - every skill described, as in Claude Code.
+- `auto` - the core workflow skills (`tdd-workflow`, `verification-loop`, `security-review`, ...)
+  plus the skills for the project's stack, detected with ECC's own project detection when OpenCode
+  opens the project (for Angular: `angular-developer`, `frontend-*`, ...).
+- `compact` - only `ecc-guide`.
+- `<ids>` - exactly the listed skills.
+
+Outside `full`, every other skill stays loadable by id, and all their ids are listed in one line.
+Each prompt also gets up to three suggestions picked by ECC's local retrieval (BM25 plus hashed
+vectors, no network), filtered by the project's stack and dropped when the match is weak. The
+suggestions are appended to the user message rather than the system prompt, so the prompt prefix
+stays stable for server-side prefix caching. The retrieval index is English; prompts in other
+languages get no suggestions and rely on the id list.
 
 ## Rules
 
