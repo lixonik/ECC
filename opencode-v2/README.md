@@ -268,5 +268,20 @@ node opencode-v2/smoke/run.js --opencode "$(command -v opencode)"
 It covers GateGuard, config protection, hookify bash/file/prompt/stop rules, patch
 translation, compaction, a read-only ECC subagent, skill loading, the compact skill catalog,
 path-scoped rules, slash command expansion (including commands that must not run shell
-interpolation), startup auto-sync and SessionEnd. Unit and integration tests that need no OpenCode binary run with the rest of the
-repository tests: `node tests/run-all.js opencode-v2`.
+interpolation), startup auto-sync, reasoning-tier variants, the review gate, the Claude CLI shim
+with its tool restrictions, and SessionEnd. Unit and integration tests that need no OpenCode
+binary run with the rest of the repository tests: `node tests/run-all.js opencode-v2`.
+
+## Recommended setup for a self-hosted DeepSeek V4 Flash
+
+With an unmetered in-house model, spend tokens on computation (reasoning, independent review,
+side tasks) rather than on prompt size:
+
+```bash
+node opencode-v2/install.js \
+  --model-map opus=company/deepseek-v4-flash#max,sonnet=company/deepseek-v4-flash#high,haiku=company/deepseek-v4-flash#fast \
+  --skill-catalog auto --rules common,typescript,angular --review-gate --claude-shim
+```
+
+Adjust the provider id, model id and rule sets to your setup, and add the variants from the
+reasoning tiers section to `opencode.json`.
