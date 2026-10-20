@@ -27,6 +27,10 @@ Hooks:
   --node <path>              Node.js executable for hook scripts (default: node on PATH)
   --llm-summary              let PreCompact/SessionEnd call the claude CLI for summaries
 
+Workflow:
+  --review-gate              before a turn with file changes ends, require a code-reviewer pass
+  --review-agent <id>        reviewer subagent for the gate (implies --review-gate)
+
 Content:
   --model-map <map>          e.g. opus=provider/big,sonnet=provider/mid,haiku=provider/small
   --skills <ids>             register only these ECC skills (comma-separated ids)
@@ -60,6 +64,7 @@ const VALUE_FLAGS = Object.freeze({
   '--model-map': (options, value) => { options.modelMap = parseModelMap(value); },
   '--skills': (options, value) => { options.skills = splitList(value); },
   '--rules': (options, value) => { options.rules = splitList(value); },
+  '--review-agent': (options, value) => { options.reviewGate = true; options.reviewAgent = value; },
   '--skill-catalog': (options, value) => { options.skillCatalog = ['full', 'compact', 'auto'].includes(value) ? value : splitList(value); },
   '--data-home': (options, value) => { options.dataHome = value; },
 });
@@ -70,6 +75,7 @@ const SWITCH_FLAGS = Object.freeze({
   '--no-context': options => { options.context = false; },
   '--no-auto-sync': options => { options.autoSync = false; },
   '--no-skill-suggestions': options => { options.skillSuggestions = false; },
+  '--review-gate': options => { options.reviewGate = true; },
   '--dry-run': options => { options.dryRun = true; },
   '--force': options => { options.force = true; },
   '--help': options => { options.action = 'help'; },
@@ -133,6 +139,7 @@ export function pluginOptionsFrom(options, root = ECC_ROOT) {
     autoSync: options.autoSync === false ? false : undefined,
     skillSuggestions: options.skillSuggestions === false ? false : undefined,
     rules: Array.isArray(options.rules) && options.rules.length > 0 ? options.rules : undefined,
+    reviewGate: options.reviewGate ? (options.reviewAgent ? { agent: options.reviewAgent } : true) : undefined,
   });
 }
 
@@ -182,7 +189,7 @@ function currentHash(file) {
 
 const INSTALL_OPTION_KEYS = Object.freeze([
   'hooks', 'profile', 'disabledHooks', 'shell', 'node', 'llmSummary', 'modelMap',
-  'skills', 'skillCatalog', 'skillSuggestions', 'context', 'dataHome', 'autoSync', 'rules',
+  'skills', 'skillCatalog', 'skillSuggestions', 'context', 'dataHome', 'autoSync', 'rules', 'reviewGate', 'reviewAgent',
 ]);
 
 function installOptionsOf(options) {
@@ -199,6 +206,9 @@ export function install(options, { root = ECC_ROOT, log = console.log } = {}) {
   const unknownRules = (options.rules ?? []).filter(set => !availableRuleSets(root).includes(set));
   if (unknownRules.length > 0) {
     throw new Error(`Unknown rule set(s): ${unknownRules.join(', ')}. Available: ${availableRuleSets(root).join(', ')}`);
+  }
+  if (options.reviewAgent && !fs.existsSync(path.join(root, 'agents', `${options.reviewAgent}.md`))) {
+    throw new Error(`Unknown review agent: ${options.reviewAgent}`);
   }
   const targetDir = resolveTargetDir(options);
   const previous = readManifest(targetDir);

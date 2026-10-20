@@ -6,6 +6,7 @@ import { emptyOutcome, interpretHookResult, mergeOutcomes } from '../lib/hook-pr
 import { loadHookManifest, selectHookCommands } from '../lib/hooks-manifest.js';
 import { configuredShell, shellToolNameFor } from '../lib/opencode-config.js';
 import { runHookProcess } from '../lib/hook-runner.js';
+import { createReviewGate } from '../lib/review-gate.js';
 import { createRuleTracker, loadRuleSets } from '../lib/rules.js';
 import { autoCatalog, createSkillRouter, detectProjectStack, suggestionNote } from '../lib/skill-routing.js';
 import { applySkillCatalog, hiddenSkillsNote, loadEccSkills } from '../lib/skills.js';
@@ -21,6 +22,7 @@ export const PERMISSION_ACTION = 'ecc_hook';
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BUILTIN_TOOLS = new Set(['shell', 'edit', 'write', 'patch', 'read', 'glob', 'grep', 'skill', 'subagent', 'webfetch', 'websearch', 'question', CODE_MODE_TOOL]);
 const MAX_STOP_CONTINUATIONS = 3;
+const FILE_CHANGING_TOOLS = new Set(['edit', 'write', 'patch']);
 const SHUTDOWN_HOOK_BUDGET_MS = 5000;
 
 export function createEccPlugin(defaults = {}) {
@@ -87,6 +89,10 @@ export async function setupEcc(ctx, options = {}) {
   const allowedCalls = new Set();
   const pendingToolContext = new Map();
 
+  const reviewGate = options.reviewGate
+    ? createReviewGate({ agent: typeof options.reviewGate === 'object' ? options.reviewGate.agent : undefined, projectDir })
+    : null;
+
   const sessionState = async sessionID => {
     let session = sessions.get(sessionID);
     if (!session) {
@@ -106,6 +112,12 @@ export async function setupEcc(ctx, options = {}) {
       }
     }
     return session;
+  };
+
+  const rootOf = async session => {
+    let current = session;
+    for (let depth = 0; depth < 8 && current.parentID; depth += 1) current = await sessionState(current.parentID);
+    return current;
   };
 
   const payloadFor = (session, eventName, extra = {}) => ({
@@ -174,6 +186,7 @@ export async function setupEcc(ctx, options = {}) {
     if (event.tool === CODE_MODE_TOOL) return;
     if (!BUILTIN_TOOLS.has(event.tool)) await toolIndex.refreshFor(event.tool);
     const session = await sessionState(event.sessionID);
+    if (reviewGate && event.tool === 'subagent') reviewGate.recordSubagent((await rootOf(session)).id, event.input?.agent);
     const calls = toClaudeCalls(event.tool, event.input, translateEnv(event.sessionID));
     const contexts = [];
     for (const [index, call] of calls.entries()) {
@@ -212,6 +225,10 @@ export async function setupEcc(ctx, options = {}) {
     const calls = toClaudeCalls(event.tool, event.input, translateEnv(event.sessionID));
     const response = toClaudeResponse(event.tool, event);
     const eventName = event.status === 'error' ? 'PostToolUseFailure' : 'PostToolUse';
+    if (reviewGate && event.status === 'completed' && FILE_CHANGING_TOOLS.has(event.tool)) {
+      const changed = calls.flatMap(call => [call.input?.file_path, call.input?.new_file_path]).filter(value => typeof value === 'string' && value);
+      reviewGate.recordChanges((await rootOf(session)).id, changed);
+    }
     const feedback = [...(pendingToolContext.get(event.id) ?? [])];
     pendingToolContext.delete(event.id);
     allowedCalls.delete(event.id);
@@ -255,6 +272,7 @@ export async function setupEcc(ctx, options = {}) {
     }
     session.stopHookActive = false;
     session.continuations = 0;
+    reviewGate?.startTurn(session.id);
     await ensureStarted(session, session.createdHere ? 'startup' : 'resume');
     const outcome = await runHooks('UserPromptSubmit', '', payloadFor(session, 'UserPromptSubmit', { prompt: text }));
     if (outcome.block) {
@@ -290,11 +308,13 @@ export async function setupEcc(ctx, options = {}) {
       stop_hook_active: session.stopHookActive,
       last_assistant_message: session.lastAssistantText,
     }));
-    if (!outcome.block || session.continuations >= MAX_STOP_CONTINUATIONS) return;
+    if (session.continuations >= MAX_STOP_CONTINUATIONS) return;
+    const reason = outcome.block ? outcome.reason : reviewGate?.claim(sessionID);
+    if (!reason) return;
     session.stopHookActive = true;
     session.continuations += 1;
-    session.pendingContinuation = outcome.reason;
-    await deliverToModel(sessionID, [outcome.reason], true);
+    session.pendingContinuation = reason;
+    await deliverToModel(sessionID, [reason], true);
   };
 
   const runSessionEnd = async (sessionID, reason) => {

@@ -216,6 +216,28 @@ const SCENARIOS = {
       expect(parent && parent.body.reasoning_effort === undefined, 'the main agent keeps the session model settings');
     },
   },
+  'review-gate': {
+    env: GATEGUARD_OFF,
+    install: { reviewGate: true },
+    steps: [
+      { tool: 'write', args: { path: 'feature.ts', content: 'export const answer = 42;\n' } },
+      { text: 'Feature written.' },
+      { tool: 'subagent', args: { agent: 'code-reviewer', description: 'Review changes', prompt: '[[scenario:child-review]] Review feature.ts' } },
+      { text: 'Review addressed.' },
+    ],
+    server: async ({ call, waitForRequests }) => {
+      await call('POST', '/api/session/:id/prompt', { text: '[[scenario:review-gate]] Add the feature.' });
+      await waitForRequests(requests => requests.some(request => toolResults([request]).some(text => text.includes('REVIEW-OK'))));
+    },
+    check: ({ requests }) => {
+      const gateRequests = requests.filter(request => allTexts(request).some(text => text.includes('Review gate: you changed 1 file(s)')));
+      expect(gateRequests.length > 0 && allTexts(gateRequests[0]).some(text => text.includes('- feature.ts')), 'review gate names the changed file');
+      const child = requests.find(request => userTexts(request).some(text => text.includes('[[scenario:child-review]]')));
+      expect(child && systemOf(child).includes('code review'), 'the code-reviewer subagent runs');
+      const last = requests[requests.length - 1];
+      expect(allTexts(last).filter(text => text.includes('Review gate:')).length === 1, 'the gate fires only once in the turn');
+    },
+  },
   'skill-load': {
     env: GATEGUARD_OFF,
     prompt: 'Load the TDD skill.',
@@ -240,7 +262,7 @@ const SCENARIOS = {
   },
 };
 
-const CHILD_SCENARIOS = { 'child-plan': [{ text: 'PLAN-OK' }] };
+const CHILD_SCENARIOS = { 'child-plan': [{ text: 'PLAN-OK' }], 'child-review': [{ text: 'REVIEW-OK: no CRITICAL or HIGH issues.' }] };
 
 const failures = [];
 

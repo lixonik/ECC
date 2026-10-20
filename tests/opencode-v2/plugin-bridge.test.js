@@ -236,6 +236,59 @@ async function main() {
     assert.ok(!advertised.includes('security-review'));
   }));
 
+  const runTurn = async (fake, sessionID, { writes = [], reviewer = null, childWrites = [] } = {}) => {
+    await trigger(fake.hooks, 'session.prompt', { sessionID, messageID: `m_${Math.random()}`, prompt: { text: 'do the work' }, delivery: 'queue' });
+    for (const file of writes) {
+      const before = toolEvent('write', { path: file, content: 'x\n' }, { sessionID });
+      await trigger(fake.hooks, 'tool.execute.before', before);
+      await trigger(fake.hooks, 'tool.execute.after', { ...before, status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } });
+    }
+    for (const file of childWrites) {
+      const before = toolEvent('write', { path: file, content: 'x\n' }, { sessionID: `${sessionID}_child` });
+      await trigger(fake.hooks, 'tool.execute.after', { ...before, status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } });
+    }
+    if (reviewer) await trigger(fake.hooks, 'tool.execute.before', toolEvent('subagent', { agent: reviewer, description: 'review', prompt: 'review' }, { sessionID }));
+    fake.events.push({ type: 'session.execution.succeeded', data: { sessionID } });
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  };
+
+  const startGated = async (name, options = {}) => {
+    const fake = await start(createProject(name), { hooks: { enabled: true, profile: 'minimal', disabled: ['stop:session-end', 'stop:evaluate-session', 'stop:cost-tracker'] }, reviewGate: true, ...options });
+    fake.ctx.session.get = async ({ sessionID }) => (sessionID.endsWith('_child')
+      ? { id: sessionID, parentID: sessionID.replace(/_child$/, ''), time: { created: Date.now() } }
+      : { id: sessionID, time: { created: Date.now() } });
+    return fake;
+  };
+
+  results.push(await test('review gate fires once per turn with the changed files', async () => {
+    const fake = await startGated('gate-once');
+    await runTurn(fake, 'ses_gate', { writes: ['src/a.ts', 'src/b.ts'] });
+    assert.strictEqual(fake.synthetic.length, 1);
+    assert.ok(fake.synthetic[0].resume === true && fake.synthetic[0].text.includes('Review gate: you changed 2 file(s)'));
+    assert.ok(fake.synthetic[0].text.includes('- src/a.ts') && fake.synthetic[0].text.includes('`code-reviewer`'));
+    fake.events.push({ type: 'session.execution.succeeded', data: { sessionID: 'ses_gate' } });
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.strictEqual(fake.synthetic.length, 1, 'the gate does not fire twice in one turn');
+    await runTurn(fake, 'ses_gate', { writes: ['src/c.ts'] });
+    assert.strictEqual(fake.synthetic.length, 2, 'a new user turn re-arms the gate');
+  }));
+
+  results.push(await test('review gate stays quiet without changes or after a reviewer ran', async () => {
+    const fake = await startGated('gate-quiet', { reviewGate: { agent: 'typescript-reviewer' } });
+    await runTurn(fake, 'ses_none');
+    await runTurn(fake, 'ses_reviewed', { writes: ['src/a.ts'], reviewer: 'security-reviewer' });
+    assert.strictEqual(fake.synthetic.length, 0);
+    await runTurn(fake, 'ses_custom', { writes: ['src/a.ts'] });
+    assert.ok(fake.synthetic[0].text.includes('`typescript-reviewer`'));
+  }));
+
+  results.push(await test('review gate counts subagent edits toward the parent turn', async () => {
+    const fake = await startGated('gate-child');
+    await runTurn(fake, 'ses_parent', { childWrites: ['src/child.ts'] });
+    assert.strictEqual(fake.synthetic.length, 1);
+    assert.ok(fake.synthetic[0].text.includes('- src/child.ts'));
+  }));
+
   results.push(await test('auto catalog follows the project stack and suggests skills per prompt', async () => {
     const projectDir = createProject('auto-catalog', {
       'package.json': JSON.stringify({ dependencies: { '@angular/core': '^20.0.0' }, devDependencies: { typescript: '^5.8.0' } }),

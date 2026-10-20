@@ -70,6 +70,7 @@ node opencode-v2/install.js uninstall
 | `--no-skill-suggestions` | Do not append per-prompt skill suggestions in non-`full` catalogs |
 | `--no-context` | Do not add the short ECC tool-mapping note to the system prompt |
 | `--rules <sets>` | Apply ECC rule sets from `rules/`, for example `common,typescript,angular` (see below). Off by default |
+| `--review-gate` / `--review-agent <id>` | Before a turn that changed files ends, require an independent reviewer subagent pass (see Review gate below). Off by default |
 | `--node <path>` | Node.js executable for hook scripts (default `node` on `PATH`, or `$ECC_NODE`) |
 | `--llm-summary` | Allow PreCompact/SessionEnd hooks to call the `claude` CLI for summaries (off by default) |
 | `--data-home <dir>` | `ECC_AGENT_DATA_HOME` for hooks and shells (default: ECC's own default, `~/.claude`) |
@@ -144,6 +145,17 @@ vectors, no network), filtered by the project's stack and dropped when the match
 suggestions are appended to the user message rather than the system prompt, so the prompt prefix
 stays stable for server-side prefix caching. The retrieval index is English; prompts in other
 languages get no suggestions and rely on the id list.
+
+## Review gate
+
+A model reviewing its own work in the same context tends to approve it. With `--review-gate`,
+when a turn changed files (including edits made by subagents) and no `*-reviewer` subagent ran,
+the bridge holds the turn open once: it lists the changed files and asks the model to run
+`code-reviewer` (or `--review-agent <id>`, for example `typescript-reviewer`) in a fresh context
+and fix every CRITICAL and HIGH finding. It fires at most once per user turn, after ECC's own
+Stop hooks, and like any Stop continuation it needs an interactive session (TUI or `opencode
+serve`), not single-shot `opencode run`. It costs one review per changed turn, which pays off
+when tokens are cheap and the model is small.
 
 ## One self-hosted model: reasoning tiers
 

@@ -174,6 +174,14 @@ async function main() {
     assert.ok(fs.readFileSync(path.join(configDir, 'plugins', 'ecc', 'index.js'), 'utf8').includes('"angular"'));
   })));
 
+  results.push(await test('review gate flags reach the plugin and unknown agents fail', () => withTarget(async (configDir, options) => {
+    assert.deepStrictEqual(installer.pluginOptionsFrom(installer.parseArgs(['--review-gate'])).reviewGate, true);
+    assert.deepStrictEqual(installer.pluginOptionsFrom(installer.parseArgs(['--review-agent', 'typescript-reviewer'])).reviewGate, { agent: 'typescript-reviewer' });
+    assert.throws(() => installer.install(options({ reviewGate: true, reviewAgent: 'nobody' }), quiet), /Unknown review agent: nobody/);
+    installer.install(options({ reviewGate: true }), quiet);
+    assert.ok(fs.readFileSync(path.join(configDir, 'plugins', 'ecc', 'index.js'), 'utf8').includes('"reviewGate": true'));
+  })));
+
   results.push(await test('project scope targets <project>/.opencode', () => {
     const target = installer.resolveTargetDir({ scope: 'project', project: path.join(os.tmpdir(), 'demo') });
     assert.strictEqual(target, path.join(os.tmpdir(), 'demo', '.opencode'));
