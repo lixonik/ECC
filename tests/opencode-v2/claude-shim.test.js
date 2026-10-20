@@ -77,6 +77,14 @@ async function main() {
       assert.strictEqual(shim.resolveShimModel('haiku', models), 'c/m');
       assert.strictEqual(shim.resolveShimModel('other/model', models), 'other/model');
       assert.strictEqual(shim.resolveShimModel(undefined, {}), undefined);
+      assert.strictEqual(shim.resolveShimModel('haiku', { opus: 'c/m#max' }, 'c/m#high'), 'c/m#high', 'unmapped tiers follow the session model');
+      assert.strictEqual(shim.resolveShimModel('opus', { opus: 'c/m#max' }, 'c/m#high'), 'c/m#max', 'an explicit tier map wins');
+      assert.strictEqual(shim.resolveShimModel(undefined, { default: 'c/m' }, 'c/m#high'), 'c/m#high');
+    }));
+
+    results.push(await test('nested runs inherit the reasoning variant of the calling session', async () => {
+      const result = await run(['-p', 'go'], { env: { ECC_OPENCODE_MODEL: 'company/flash#high', ECC_CLAUDE_SHIM_MODELS: '{}' } });
+      assert.ok(result.stdout.includes('-m company/flash#high'), result.stdout);
     }));
 
     results.push(await test('text mode passes the prompt on stdin and prints the final answer', async () => {

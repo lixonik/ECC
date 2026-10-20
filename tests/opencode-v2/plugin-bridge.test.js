@@ -308,6 +308,13 @@ async function main() {
     assert.strictEqual(full.hooks['session.prompt'], undefined, 'no suggestions when every skill is already described');
   }));
 
+  results.push(await test('model refs keep the reasoning variant', async () => {
+    const { formatModelRef } = await import(pathToFileURL(path.join(repoRoot, 'opencode-v2', 'plugin', 'ecc.js')).href);
+    assert.strictEqual(formatModelRef({ providerID: 'company', id: 'deepseek-v4-flash', variant: 'high' }), 'company/deepseek-v4-flash#high');
+    assert.strictEqual(formatModelRef({ providerID: 'company', id: 'deepseek-v4-flash' }), 'company/deepseek-v4-flash');
+    assert.strictEqual(formatModelRef(undefined), undefined);
+  }));
+
   results.push(await test('ECC rules follow Claude Code paths scoping per session', async () => {
     const projectDir = createProject('rules');
     const fake = await start(projectDir, { hooks: false, rules: ['common', 'angular'] });

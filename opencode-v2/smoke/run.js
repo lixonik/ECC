@@ -216,6 +216,21 @@ const SCENARIOS = {
       expect(parent && parent.body.reasoning_effort === undefined, 'the main agent keeps the session model settings');
     },
   },
+  'variant-inherit': {
+    env: GATEGUARD_OFF,
+    model: 'mock/scripted#max',
+    prompt: 'Delegate planning while the session runs a reasoning variant.',
+    steps: [
+      { tool: 'subagent', args: { agent: 'planner', description: 'Plan', prompt: '[[scenario:child-plan]] Plan under the session variant.' } },
+      { text: 'Inherit step finished.' },
+    ],
+    check: ({ requests }) => {
+      const parent = requests.find(request => userTexts(request).some(text => text.includes('[[scenario:variant-inherit]]')));
+      const child = requests.find(request => userTexts(request).some(text => text.includes('[[scenario:child-plan]]')));
+      expect(parent && parent.body.reasoning_effort === 'max', 'the session runs with the selected variant');
+      expect(child && child.body.reasoning_effort === 'max', `an ECC subagent without a tier map inherits the session variant (got ${child?.body?.reasoning_effort ?? 'none'})`);
+    },
+  },
   'review-gate': {
     env: GATEGUARD_OFF,
     install: { reviewGate: true },
@@ -241,6 +256,7 @@ const SCENARIOS = {
   'claude-shim': {
     env: GATEGUARD_OFF,
     install: { claudeShim: true },
+    model: 'mock/scripted#max',
     prompt: 'Ask the claude CLI for a one-line answer.',
     steps: [
       { tool: 'shell', args: { command: 'claude -p "[[scenario:shim-inner]] Reply with the marker" --allowedTools Read' } },
@@ -251,6 +267,7 @@ const SCENARIOS = {
       const inner = requests.filter(request => userTexts(request).some(text => text.includes('[[scenario:shim-inner]]')));
       expect(inner.length > 0, 'the shim runs a nested OpenCode session against the same model');
       expect(inner.some(request => toolResults([request]).some(text => text.includes('is not allowed in this headless run'))), '--allowedTools Read blocks the nested shell call');
+      expect(inner.length > 0 && inner.every(request => request.body.reasoning_effort === 'max'), 'the nested run inherits the session reasoning variant');
     },
   },
   'skill-load': {

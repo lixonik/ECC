@@ -47,6 +47,7 @@ export async function setupEcc(ctx, options = {}) {
   const shellTool = createShellToolResolver(options.shell, projectDir);
   await registerHeadlessGuard(ctx, { projectDir, shellToolName: shellTool.name });
   const sessions = new Map();
+  const activeModel = { last: undefined };
   const startedAt = Date.now();
 
   if (options.installDir && options.autoSync !== false) scheduleInstallSync(root, path.resolve(options.installDir), logger);
@@ -59,7 +60,7 @@ export async function setupEcc(ctx, options = {}) {
     shellTool.observe(event.shell);
     const shellEnv = event.env ?? {};
     const pathSource = Object.keys(shellEnv).some(key => key.toUpperCase() === 'PATH') ? shellEnv : { ...process.env, ...shellEnv };
-    event.env = { ...shellEnv, ...shellEnvFor(root, options, pathSource) };
+    event.env = { ...shellEnv, ...shellEnvFor(root, options, pathSource), ...(options.claudeShim ? modelEnv(activeModel.last) : {}) };
   });
 
   const note = options.context === false ? null : eccNote(root);
@@ -110,6 +111,7 @@ export async function setupEcc(ctx, options = {}) {
         session.parentID = info?.parentID ?? session.parentID;
         session.agent = info?.agent ?? session.agent;
         session.model ??= formatModel(info?.model);
+        session.modelRef ??= formatModelRef(info?.model);
         if (typeof info?.time?.created === 'number' && info.time.created >= startedAt) session.createdHere = true;
       } catch (error) {
         logger.warn(`session lookup failed for ${sessionID}: ${error.message}`);
@@ -143,6 +145,7 @@ export async function setupEcc(ctx, options = {}) {
       ECC_SESSION_ID: payload.session_id,
       CLAUDE_TRANSCRIPT_PATH: payload.transcript_path,
       CLAUDE_HOOK_EVENT_NAME: eventName,
+      ...modelEnv(sessions.get(payload.session_id)?.modelRef ?? activeModel.last),
     };
     const awaited = [];
     for (const command of commands) {
@@ -338,6 +341,8 @@ export async function setupEcc(ctx, options = {}) {
     'session.step.started': async data => {
       const session = await sessionState(data.sessionID);
       session.model = formatModel(data.model);
+      session.modelRef = formatModelRef(data.model) ?? session.modelRef;
+      activeModel.last = session.modelRef ?? activeModel.last;
       session.models.set(data.assistantMessageID, session.model);
     },
     'session.text.ended': async data => {
@@ -519,6 +524,17 @@ export function eccNote(root) {
 
 function wrap(tag, lines) {
   return `<${tag}>\n${lines.filter(Boolean).join('\n\n')}\n</${tag}>`;
+}
+
+export function formatModelRef(model) {
+  if (!model || typeof model !== 'object' || !model.providerID) return undefined;
+  const id = model.id ?? model.modelID;
+  if (!id) return undefined;
+  return `${model.providerID}/${id}${model.variant ? `#${model.variant}` : ''}`;
+}
+
+function modelEnv(modelRef) {
+  return modelRef ? { ECC_OPENCODE_MODEL: modelRef } : {};
 }
 
 function formatModel(model) {

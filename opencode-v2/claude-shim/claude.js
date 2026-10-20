@@ -49,11 +49,10 @@ export function parseClaudeArgs(argv) {
   return parsed;
 }
 
-export function resolveShimModel(name, models = {}) {
-  if (typeof name !== 'string' || !name.trim()) return models.default;
-  if (name.includes('/')) return name;
-  const tier = ['opus', 'sonnet', 'haiku'].find(candidate => name.toLowerCase().includes(candidate));
-  return (tier && models[tier]) ?? models.default;
+export function resolveShimModel(name, models = {}, sessionModel = undefined) {
+  if (typeof name === 'string' && name.includes('/')) return name;
+  const tier = typeof name === 'string' ? ['opus', 'sonnet', 'haiku'].find(candidate => name.toLowerCase().includes(candidate)) : undefined;
+  return (tier && models[tier]) || sessionModel || models.default;
 }
 
 export function composePrompt(parsed, stdinText) {
@@ -131,7 +130,7 @@ export function runShim({ argv, stdinText, env = process.env, cwd = process.cwd(
     return Promise.resolve(1);
   }
   const models = safeJson(env[MODELS_ENV]) ?? {};
-  const model = resolveShimModel(parsed.model, models);
+  const model = resolveShimModel(parsed.model, models, env.ECC_OPENCODE_MODEL);
   const bin = env.ECC_OPENCODE_BIN || 'opencode';
   const args = ['run', '--standalone', '--auto', '--format', 'json', ...(model ? ['-m', model] : [])];
   const [command, commandArgs] = /\.(?:m?js|cjs)$/.test(bin) ? [process.execPath, [bin, ...args]] : [bin, args];
