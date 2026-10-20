@@ -201,6 +201,21 @@ const SCENARIOS = {
       expect(toolResults(requests).some(text => text.includes('PLAN-OK')), 'subagent result returns to the parent');
     },
   },
+  'tier-variant': {
+    env: GATEGUARD_OFF,
+    install: { modelMap: { opus: 'mock/scripted#max', haiku: 'mock/scripted#fast' } },
+    prompt: 'Delegate planning to the deep-thinking planner.',
+    steps: [
+      { tool: 'subagent', args: { agent: 'planner', description: 'Plan deeply', prompt: '[[scenario:child-plan]] Plan with maximum reasoning.' } },
+      { text: 'Tier step finished.' },
+    ],
+    check: ({ requests }) => {
+      const child = requests.find(request => userTexts(request).some(text => text.includes('[[scenario:child-plan]]')));
+      const parent = requests.find(request => userTexts(request).some(text => text.includes('[[scenario:tier-variant]]')));
+      expect(child && child.body.reasoning_effort === 'max' && child.body.thinking?.type === 'enabled', 'opus-tier ECC agent runs with the max reasoning variant');
+      expect(parent && parent.body.reasoning_effort === undefined, 'the main agent keeps the session model settings');
+    },
+  },
   'skill-load': {
     env: GATEGUARD_OFF,
     prompt: 'Load the TDD skill.',
@@ -377,7 +392,12 @@ async function main() {
         package: '@opencode/ai/providers/openai-compatible',
         settings: { baseURL: provider.baseURL, apiKey: 'mock' },
         models: {
-          scripted: { name: 'Scripted', capabilities: { tools: true }, limit: { context: 200000, output: 8000 } },
+          scripted: {
+            name: 'Scripted',
+            capabilities: { tools: true },
+            limit: { context: 200000, output: 8000 },
+            variants: [{ id: 'fast', body: { thinking: { type: 'disabled' } } }, { id: 'max', body: { thinking: { type: 'enabled' }, reasoning_effort: 'max' } }],
+          },
           'gpt-mock': { name: 'Scripted GPT', capabilities: { tools: true }, limit: { context: 200000, output: 8000 } },
         },
       },

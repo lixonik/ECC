@@ -145,6 +145,44 @@ suggestions are appended to the user message rather than the system prompt, so t
 stays stable for server-side prefix caching. The retrieval index is English; prompts in other
 languages get no suggestions and rely on the id list.
 
+## One self-hosted model: reasoning tiers
+
+ECC agents carry Claude tiers: `opus` for planner, architect, spec-miner and healthcare-reviewer,
+`haiku` for doc-updater, docs-lookup, comment-analyzer, conversation-analyzer and the opensource
+pair, `sonnet` for the rest. With a single model such as DeepSeek V4 Flash, map the tiers to its
+reasoning modes instead of to different models. Declare the modes as variants of the model in
+`opencode.json` (the request fields below are DeepSeek's API; a self-hosted server may name them
+differently, so check with whoever runs it):
+
+```json
+{
+  "providers": {
+    "company": {
+      "models": {
+        "deepseek-v4-flash": {
+          "variants": [
+            { "id": "fast", "body": { "thinking": { "type": "disabled" } } },
+            { "id": "high", "body": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" } },
+            { "id": "max", "body": { "thinking": { "type": "enabled" }, "reasoning_effort": "max" } }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+Then install with the tier map:
+
+```bash
+node opencode-v2/install.js --model-map opus=company/deepseek-v4-flash#max,sonnet=company/deepseek-v4-flash#high,haiku=company/deepseek-v4-flash#fast
+```
+
+Planning and architecture then think at the maximum effort, review and build work at high, and
+lookup or documentation agents answer without a thinking pass. OpenCode's own title agent can
+use the fast variant too (`"agents": { "title": { "model": "company/deepseek-v4-flash#fast" } }`).
+The smoke suite checks that the variant's request fields reach the subagent's model requests.
+
 ## Rules
 
 The Claude Code plugin cannot ship ECC's `rules/`; in Claude Code they are installed into
