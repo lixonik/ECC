@@ -7,6 +7,7 @@ import { loadHookManifest, selectHookCommands } from '../lib/hooks-manifest.js';
 import { configuredShell, shellToolNameFor } from '../lib/opencode-config.js';
 import { runHookProcess } from '../lib/hook-runner.js';
 import { createRuleTracker, loadRuleSets } from '../lib/rules.js';
+import { autoCatalog, createSkillRouter, detectProjectStack, suggestionNote } from '../lib/skill-routing.js';
 import { applySkillCatalog, hiddenSkillsNote, loadEccSkills } from '../lib/skills.js';
 import { CODE_MODE_TOOL, fromClaudeInput, toClaudeCalls, toClaudeResponse } from '../lib/tool-translate.js';
 import { createLogger } from '../lib/logger.js';
@@ -47,8 +48,8 @@ export async function setupEcc(ctx, options = {}) {
   if (options.installDir && options.autoSync !== false) scheduleInstallSync(root, path.resolve(options.installDir), logger);
 
   const skillState = options.skills === false
-    ? { hidden: [] }
-    : await registerSkills(ctx, root, logger, options.skills, options.skillCatalog);
+    ? { hidden: [], hiddenIds: new Set(), skills: [], projectStack: new Set() }
+    : await registerSkills(ctx, { root, projectDir, logger, selection: options.skills, catalogOption: options.skillCatalog });
 
   await ctx.shell.hook('create.before', event => {
     shellTool.observe(event.shell);
@@ -70,6 +71,7 @@ export async function setupEcc(ctx, options = {}) {
     const reason = hookOptions.enabled === false ? 'disabled by plugin options' : `disabled by environment (ECC_HOOKS_ENABLED=${baseEnv.ECC_HOOKS_ENABLED ?? 'unset'})`;
     logger.info(`ECC hooks inactive for ${projectDir}: ${reason}`);
     await ctx.session.hook('context', pushAmbient);
+    await registerSkillSuggestions(ctx, { root, options, skillState, logger });
     return undefined;
   }
 
@@ -344,6 +346,8 @@ export async function setupEcc(ctx, options = {}) {
   consumeEvents(ctx, subscription.signal, handlers, logger, debug);
   logger.info(`ECC hook bridge active for ${projectDir} (root ${root})`);
 
+  await registerSkillSuggestions(ctx, { root, options, skillState, logger });
+
   return async () => {
     subscription.abort();
     const ends = [...sessions.keys()].map(sessionID => runSessionEnd(sessionID, 'prompt_input_exit'));
@@ -354,7 +358,7 @@ export async function setupEcc(ctx, options = {}) {
   };
 }
 
-async function registerSkills(ctx, root, logger, selection, catalogOption) {
+async function registerSkills(ctx, { root, projectDir, logger, selection, catalogOption }) {
   const { skills, skipped } = loadEccSkills(root);
   for (const entry of skipped) logger.warn(`skill ${entry.id} skipped: ${entry.reason}`);
   const wanted = Array.isArray(selection) ? new Set(selection) : null;
@@ -362,9 +366,11 @@ async function registerSkills(ctx, root, logger, selection, catalogOption) {
   for (const id of [...(wanted ?? []), ...(Array.isArray(catalogOption) ? catalogOption : [])]) {
     if (!skills.some(skill => skill.id === id)) logger.warn(`skill ${id} requested but not found in ECC`);
   }
-  const catalog = applySkillCatalog(selected, catalogOption);
+  const projectStack = catalogOption === 'auto' ? detectProjectStack(root, projectDir) : new Set();
+  const catalog = applySkillCatalog(selected, catalogOption === 'auto' ? autoCatalog(selected, projectStack) : catalogOption);
+  if (catalogOption === 'auto') logger.info(`auto skill catalog for ${projectDir} (stack: ${[...projectStack].join(', ') || 'unknown'}): ${selected.length - catalog.hidden.length} described`);
   const hiddenIds = new Set(catalog.hidden);
-  const state = { hidden: [] };
+  const state = { hidden: [], hiddenIds, skills: selected, projectStack };
   await ctx.skill.transform(editor => {
     const hidden = [];
     for (const skill of catalog.skills) {
@@ -506,6 +512,25 @@ async function registerRules(ctx, { root, projectDir, sets, logger, shellToolNam
   });
   logger.info(`ECC rules loaded: ${rules.length} from ${sets.join(', ')}`);
   return tracker;
+}
+
+async function registerSkillSuggestions(ctx, { root, options, skillState, logger }) {
+  if (options.skillSuggestions === false || skillState.hiddenIds.size === 0) return;
+  let router;
+  try {
+    router = createSkillRouter(root, skillState.skills, skillState.projectStack.size > 0 ? skillState.projectStack : detectProjectStack(root, ctx.location?.directory));
+  } catch (error) {
+    logger.warn(`skill suggestions unavailable: ${error.message}`);
+    return;
+  }
+  await ctx.session.hook('prompt', event => {
+    const text = typeof event.prompt?.text === 'string' ? event.prompt.text : '';
+    if (!text.trim() || text.trimStart().startsWith('<ecc-')) return;
+    const suggestions = router.suggest(text, { candidates: skillState.hiddenIds });
+    if (suggestions.length > 0) event.prompt.text = `${text}
+
+${suggestionNote(suggestions)}`;
+  });
 }
 
 const installSyncs = new Map();

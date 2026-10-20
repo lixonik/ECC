@@ -30,8 +30,10 @@ Hooks:
 Content:
   --model-map <map>          e.g. opus=provider/big,sonnet=provider/mid,haiku=provider/small
   --skills <ids>             register only these ECC skills (comma-separated ids)
-  --skill-catalog <mode>     full (default), compact, or comma-separated ids: which skills are
-                             described in the system prompt; the rest load by id on demand
+  --skill-catalog <mode>     full (default), auto, compact, or comma-separated ids: which skills
+                             are described in the system prompt; the rest load by id on demand.
+                             auto describes workflow skills plus skills for the project's stack
+  --no-skill-suggestions     do not append per-prompt skill suggestions (non-full catalogs)
   --no-skills                do not register ECC skills
   --no-context               do not inject the ECC tool-mapping note
   --rules <sets>             ECC rule sets to apply, e.g. common,typescript,angular; rules with
@@ -58,7 +60,7 @@ const VALUE_FLAGS = Object.freeze({
   '--model-map': (options, value) => { options.modelMap = parseModelMap(value); },
   '--skills': (options, value) => { options.skills = splitList(value); },
   '--rules': (options, value) => { options.rules = splitList(value); },
-  '--skill-catalog': (options, value) => { options.skillCatalog = ['full', 'compact'].includes(value) ? value : splitList(value); },
+  '--skill-catalog': (options, value) => { options.skillCatalog = ['full', 'compact', 'auto'].includes(value) ? value : splitList(value); },
   '--data-home': (options, value) => { options.dataHome = value; },
 });
 
@@ -67,6 +69,7 @@ const SWITCH_FLAGS = Object.freeze({
   '--no-skills': options => { options.skills = false; },
   '--no-context': options => { options.context = false; },
   '--no-auto-sync': options => { options.autoSync = false; },
+  '--no-skill-suggestions': options => { options.skillSuggestions = false; },
   '--dry-run': options => { options.dryRun = true; },
   '--force': options => { options.force = true; },
   '--help': options => { options.action = 'help'; },
@@ -128,6 +131,7 @@ export function pluginOptionsFrom(options, root = ECC_ROOT) {
     llmSummary: options.llmSummary,
     dataHome: options.dataHome ? path.resolve(options.dataHome) : undefined,
     autoSync: options.autoSync === false ? false : undefined,
+    skillSuggestions: options.skillSuggestions === false ? false : undefined,
     rules: Array.isArray(options.rules) && options.rules.length > 0 ? options.rules : undefined,
   });
 }
@@ -178,7 +182,7 @@ function currentHash(file) {
 
 const INSTALL_OPTION_KEYS = Object.freeze([
   'hooks', 'profile', 'disabledHooks', 'shell', 'node', 'llmSummary', 'modelMap',
-  'skills', 'skillCatalog', 'context', 'dataHome', 'autoSync', 'rules',
+  'skills', 'skillCatalog', 'skillSuggestions', 'context', 'dataHome', 'autoSync', 'rules',
 ]);
 
 function installOptionsOf(options) {

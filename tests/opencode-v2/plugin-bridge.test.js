@@ -236,6 +236,25 @@ async function main() {
     assert.ok(!advertised.includes('security-review'));
   }));
 
+  results.push(await test('auto catalog follows the project stack and suggests skills per prompt', async () => {
+    const projectDir = createProject('auto-catalog', {
+      'package.json': JSON.stringify({ dependencies: { '@angular/core': '^20.0.0' }, devDependencies: { typescript: '^5.8.0' } }),
+      'tsconfig.json': '{}',
+      'angular.json': '{}',
+    });
+    const fake = await start(projectDir, { hooks: false, skillCatalog: 'auto' });
+    const advertised = fake.skills.filter(skill => skill.autoinvoke !== false).map(skill => skill.id);
+    assert.ok(advertised.includes('angular-developer') && advertised.includes('tdd-workflow'));
+    assert.ok(!advertised.includes('django-patterns'));
+    const english = await trigger(fake.hooks, 'session.prompt', { sessionID: 'ses_auto', messageID: 'm1', prompt: { text: 'make the table accessible for screen readers' }, delivery: 'queue' });
+    assert.ok(english.prompt.text.startsWith('make the table accessible for screen readers\n\n<ecc-skill-suggestions>'));
+    assert.ok(english.prompt.text.includes('- accessibility:'));
+    const russian = await trigger(fake.hooks, 'session.prompt', { sessionID: 'ses_auto', messageID: 'm2', prompt: { text: 'Создай компонент формы входа' }, delivery: 'queue' });
+    assert.strictEqual(russian.prompt.text, 'Создай компонент формы входа');
+    const full = await start(createProject('full-catalog'), { hooks: false });
+    assert.strictEqual(full.hooks['session.prompt'], undefined, 'no suggestions when every skill is already described');
+  }));
+
   results.push(await test('ECC rules follow Claude Code paths scoping per session', async () => {
     const projectDir = createProject('rules');
     const fake = await start(projectDir, { hooks: false, rules: ['common', 'angular'] });
