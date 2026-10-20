@@ -6,6 +6,7 @@ import { emptyOutcome, interpretHookResult, mergeOutcomes } from '../lib/hook-pr
 import { loadHookManifest, selectHookCommands } from '../lib/hooks-manifest.js';
 import { configuredShell, shellToolNameFor } from '../lib/opencode-config.js';
 import { runHookProcess } from '../lib/hook-runner.js';
+import { createHeadlessGuard } from '../lib/headless-guard.js';
 import { createReviewGate } from '../lib/review-gate.js';
 import { createRuleTracker, loadRuleSets } from '../lib/rules.js';
 import { autoCatalog, createSkillRouter, detectProjectStack, suggestionNote } from '../lib/skill-routing.js';
@@ -44,6 +45,7 @@ export async function setupEcc(ctx, options = {}) {
   const hookFlags = createRequire(path.join(root, 'package.json'))('./scripts/lib/hook-flags.js');
   const hooksActive = hookOptions.enabled !== false && hookFlags.areHooksEnabled(baseEnv);
   const shellTool = createShellToolResolver(options.shell, projectDir);
+  await registerHeadlessGuard(ctx, { projectDir, shellToolName: shellTool.name });
   const sessions = new Map();
   const startedAt = Date.now();
 
@@ -55,7 +57,9 @@ export async function setupEcc(ctx, options = {}) {
 
   await ctx.shell.hook('create.before', event => {
     shellTool.observe(event.shell);
-    event.env = { ...event.env, ...shellEnvFor(root, options) };
+    const shellEnv = event.env ?? {};
+    const pathSource = Object.keys(shellEnv).some(key => key.toUpperCase() === 'PATH') ? shellEnv : { ...process.env, ...shellEnv };
+    event.env = { ...shellEnv, ...shellEnvFor(root, options, pathSource) };
   });
 
   const note = options.context === false ? null : eccNote(root);
@@ -462,6 +466,10 @@ function normalizeHookOptions(value) {
   };
 }
 
+function llmSummaryEnabled(options) {
+  return options.llmSummary === true || (Boolean(options.claudeShim) && options.llmSummary !== false);
+}
+
 function buildBaseEnv({ root, projectDir, hookOptions, options }) {
   const disabled = [process.env.ECC_DISABLED_HOOKS, ...(hookOptions.disabled ?? [])].filter(Boolean).join(',');
   return {
@@ -472,16 +480,30 @@ function buildBaseEnv({ root, projectDir, hookOptions, options }) {
     ...(hookOptions.enabled === undefined ? {} : { CLAUDE_PLUGIN_OPTION_HOOKS_ENABLED: String(hookOptions.enabled) }),
     ...(hookOptions.profile ? { CLAUDE_PLUGIN_OPTION_HOOK_PROFILE: hookOptions.profile } : {}),
     ...(disabled ? { ECC_DISABLED_HOOKS: disabled } : {}),
-    ...(options.llmSummary === true ? {} : { ECC_SKIP_LLM_SUMMARY: process.env.ECC_SKIP_LLM_SUMMARY ?? '1' }),
+    ...(llmSummaryEnabled(options) ? {} : { ECC_SKIP_LLM_SUMMARY: process.env.ECC_SKIP_LLM_SUMMARY ?? '1' }),
   };
 }
 
-function shellEnvFor(root, options) {
+function shellEnvFor(root, options, env = process.env) {
   return {
     CLAUDE_PLUGIN_ROOT: root,
     ECC_PLUGIN_ROOT: root,
     ECC_ROOT: root,
     ...(options.dataHome ? { ECC_AGENT_DATA_HOME: path.resolve(options.dataHome) } : {}),
+    ...claudeShimEnv(root, options, env),
+  };
+}
+
+export function claudeShimEnv(root, options, env = process.env) {
+  if (!options.claudeShim) return {};
+  const pathKey = Object.keys(env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
+  const shimDir = path.join(root, 'opencode-v2', 'claude-shim');
+  const current = env[pathKey] ?? '';
+  const models = typeof options.claudeShim === 'object' ? options.claudeShim.models ?? {} : {};
+  return {
+    [pathKey]: current.split(path.delimiter).includes(shimDir) ? current : [shimDir, current].filter(Boolean).join(path.delimiter),
+    ...(/opencode/i.test(path.basename(process.execPath)) ? { ECC_OPENCODE_BIN: process.execPath } : {}),
+    ECC_CLAUDE_SHIM_MODELS: JSON.stringify(models),
   };
 }
 
@@ -514,6 +536,17 @@ function reportOutcome(logger, eventName, entryId, outcome) {
 function defaultStateDir() {
   const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
   return path.join(base, 'ecc-opencode');
+}
+
+async function registerHeadlessGuard(ctx, { projectDir, shellToolName }) {
+  const headless = createHeadlessGuard(process.env);
+  if (!headless) return;
+  await ctx.tool.hook('execute.before', event => {
+    if (event.tool === CODE_MODE_TOOL) return;
+    const denied = toClaudeCalls(event.tool, event.input, { projectDir, shellToolName, mcpName: () => null })
+      .find(call => !headless.allows(call));
+    if (denied) throw new Error(`${denied.name} is not allowed in this headless run (allowed: ${headless.describe()})`);
+  });
 }
 
 async function registerRules(ctx, { root, projectDir, sets, logger, shellToolName }) {

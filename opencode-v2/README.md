@@ -73,6 +73,7 @@ node opencode-v2/install.js uninstall
 | `--review-gate` / `--review-agent <id>` | Before a turn that changed files ends, require an independent reviewer subagent pass (see Review gate below). Off by default |
 | `--node <path>` | Node.js executable for hook scripts (default `node` on `PATH`, or `$ECC_NODE`) |
 | `--llm-summary` | Allow PreCompact/SessionEnd hooks to call the `claude` CLI for summaries (off by default) |
+| `--claude-shim` | Provide a `claude` CLI that runs through OpenCode for ECC features built on `claude -p` (see Claude CLI shim below) |
 | `--data-home <dir>` | `ECC_AGENT_DATA_HOME` for hooks and shells (default: ECC's own default, `~/.claude`) |
 | `--dry-run` | Print the plan only |
 
@@ -157,6 +158,28 @@ Stop hooks, and like any Stop continuation it needs an interactive session (TUI 
 serve`), not single-shot `opencode run`. It costs one review per changed turn, which pays off
 when tokens are cheap and the model is small.
 
+## Claude CLI shim
+
+Some ECC features hand side work to the Claude Code CLI with `claude -p`: LLM session summaries
+(PreCompact and SessionEnd), the continuous-learning observer that extracts instincts, the GAN
+harness behind `/gan-build` and `/gan-design`, the `claw` REPL and `skill-comply`. Without Claude
+Code those calls fail and the features stay off. `--claude-shim` puts a `claude` launcher first on
+`PATH` for ECC hooks and OpenCode shell commands. It runs each request through
+`opencode run --standalone` with your OpenCode model and answers in Claude's shapes:
+
+- the prompt goes over stdin, so long transcripts are not limited by the command line;
+- `--model opus|sonnet|haiku` follows `--model-map`, so a one-model setup keeps its reasoning tiers;
+- `--output-format text|json|stream-json` are produced (tool calls appear as Claude `tool_use`);
+- `--max-turns` stops the run; `--allowedTools` / `--disallowedTools` (including
+  `Bash(git diff:*)`) are enforced by the plugin inside the nested run;
+- hooks are off in the nested run and a nested `claude` call is refused.
+
+LLM session summaries turn on together with the shim (`--llm-summary` is implied). Limits: every
+call starts a private OpenCode server, which adds a few seconds; Python callers on native Windows
+(`skill-comply`) cannot start a `.cmd` launcher; ECC's background observer only survives on Linux,
+macOS and WSL2 (ECC issue #2489), and it is enabled in
+`skills/continuous-learning-v2/config.json` (`observer.enabled`).
+
 ## One self-hosted model: reasoning tiers
 
 ECC agents carry Claude tiers: `opus` for planner, architect, spec-miner and healthcare-reviewer,
@@ -225,7 +248,8 @@ let OpenCode use Git Bash:
   CLI has already exited. Interactive sessions (TUI, `opencode serve`) resume normally.
 - `SessionEnd` fires when a session is deleted or the OpenCode server shuts down. A TUI
   window closing while the background service keeps running does not end the session.
-- ECC's LLM summaries call the `claude` CLI; they are skipped unless `--llm-summary` is set.
+- ECC's LLM summaries call the `claude` CLI; they are skipped unless `--claude-shim` (or a real
+  `claude` plus `--llm-summary`) is set.
 - The full ECC skill catalog adds roughly 125k characters to every request, as in Claude Code.
   On small-context or metered models use `--skill-catalog compact`, or `--skills` to drop skills.
 - Not ported: the Claude Code statusline script and the MCP server list (ECC only ships an

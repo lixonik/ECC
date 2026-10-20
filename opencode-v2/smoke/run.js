@@ -238,6 +238,21 @@ const SCENARIOS = {
       expect(allTexts(last).filter(text => text.includes('Review gate:')).length === 1, 'the gate fires only once in the turn');
     },
   },
+  'claude-shim': {
+    env: GATEGUARD_OFF,
+    install: { claudeShim: true },
+    prompt: 'Ask the claude CLI for a one-line answer.',
+    steps: [
+      { tool: 'shell', args: { command: 'claude -p "[[scenario:shim-inner]] Reply with the marker" --allowedTools Read' } },
+      { text: 'Shim step finished.' },
+    ],
+    check: ({ requests }) => {
+      expect(toolResults(requests).some(text => text.includes('SHIM-INNER-OK')), 'claude -p inside OpenCode answers through the shim');
+      const inner = requests.filter(request => userTexts(request).some(text => text.includes('[[scenario:shim-inner]]')));
+      expect(inner.length > 0, 'the shim runs a nested OpenCode session against the same model');
+      expect(inner.some(request => toolResults([request]).some(text => text.includes('is not allowed in this headless run'))), '--allowedTools Read blocks the nested shell call');
+    },
+  },
   'skill-load': {
     env: GATEGUARD_OFF,
     prompt: 'Load the TDD skill.',
@@ -262,7 +277,7 @@ const SCENARIOS = {
   },
 };
 
-const CHILD_SCENARIOS = { 'child-plan': [{ text: 'PLAN-OK' }], 'child-review': [{ text: 'REVIEW-OK: no CRITICAL or HIGH issues.' }] };
+const CHILD_SCENARIOS = { 'child-plan': [{ text: 'PLAN-OK' }], 'child-review': [{ text: 'REVIEW-OK: no CRITICAL or HIGH issues.' }], 'shim-inner': [{ tool: 'shell', args: { command: 'echo should-be-blocked' } }, { text: 'SHIM-INNER-OK' }] };
 
 const failures = [];
 

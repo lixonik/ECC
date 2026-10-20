@@ -30,6 +30,9 @@ Hooks:
 Workflow:
   --review-gate              before a turn with file changes ends, require a code-reviewer pass
   --review-agent <id>        reviewer subagent for the gate (implies --review-gate)
+  --claude-shim              provide a "claude" CLI that runs through OpenCode, so ECC features
+                             built on "claude -p" work (LLM session summaries, continuous
+                             learning observer, /gan-build, claw); also enables LLM summaries
 
 Content:
   --model-map <map>          e.g. opus=provider/big,sonnet=provider/mid,haiku=provider/small
@@ -76,6 +79,7 @@ const SWITCH_FLAGS = Object.freeze({
   '--no-auto-sync': options => { options.autoSync = false; },
   '--no-skill-suggestions': options => { options.skillSuggestions = false; },
   '--review-gate': options => { options.reviewGate = true; },
+  '--claude-shim': options => { options.claudeShim = true; },
   '--dry-run': options => { options.dryRun = true; },
   '--force': options => { options.force = true; },
   '--help': options => { options.action = 'help'; },
@@ -140,6 +144,7 @@ export function pluginOptionsFrom(options, root = ECC_ROOT) {
     skillSuggestions: options.skillSuggestions === false ? false : undefined,
     rules: Array.isArray(options.rules) && options.rules.length > 0 ? options.rules : undefined,
     reviewGate: options.reviewGate ? (options.reviewAgent ? { agent: options.reviewAgent } : true) : undefined,
+    claudeShim: options.claudeShim ? (Object.keys(options.modelMap ?? {}).length > 0 ? { models: options.modelMap } : true) : undefined,
   });
 }
 
@@ -189,7 +194,7 @@ function currentHash(file) {
 
 const INSTALL_OPTION_KEYS = Object.freeze([
   'hooks', 'profile', 'disabledHooks', 'shell', 'node', 'llmSummary', 'modelMap',
-  'skills', 'skillCatalog', 'skillSuggestions', 'context', 'dataHome', 'autoSync', 'rules', 'reviewGate', 'reviewAgent',
+  'skills', 'skillCatalog', 'skillSuggestions', 'context', 'dataHome', 'autoSync', 'rules', 'reviewGate', 'reviewAgent', 'claudeShim',
 ]);
 
 function installOptionsOf(options) {
