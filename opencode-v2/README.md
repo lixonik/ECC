@@ -168,7 +168,8 @@ Code those calls fail and the features stay off. `--claude-shim` puts a `claude`
 `opencode run --standalone` with your OpenCode model and answers in Claude's shapes:
 
 - the prompt goes over stdin, so long transcripts are not limited by the command line;
-- `--model opus|sonnet|haiku` follows `--model-map`, so a one-model setup keeps its reasoning tiers;
+- `--model opus|sonnet|haiku` follows `--model-map`; an unmapped tier uses the model and reasoning
+  level of the session that triggered the call;
 - `--output-format text|json|stream-json` are produced (tool calls appear as Claude `tool_use`);
 - `--max-turns` stops the run; `--allowedTools` / `--disallowedTools` (including
   `Bash(git diff:*)`) are enforced by the plugin inside the nested run;
@@ -180,14 +181,27 @@ call starts a private OpenCode server, which adds a few seconds; Python callers 
 macOS and WSL2 (ECC issue #2489), and it is enabled in
 `skills/continuous-learning-v2/config.json` (`observer.enabled`).
 
-## One self-hosted model: reasoning tiers
+## One self-hosted model: reasoning levels
 
-ECC agents carry Claude tiers: `opus` for planner, architect, spec-miner and healthcare-reviewer,
-`haiku` for doc-updater, docs-lookup, comment-analyzer, conversation-analyzer and the opensource
-pair, `sonnet` for the rest. With a single model such as DeepSeek V4 Flash, map the tiers to its
-reasoning modes instead of to different models. Declare the modes as variants of the model in
-`opencode.json` (the request fields below are DeepSeek's API; a self-hosted server may name them
-differently, so check with whoever runs it):
+With a single model, its reasoning levels are OpenCode model variants (for example `low`,
+`medium`, `high`, picked with the model in the TUI). Pick a level for the session and everything
+ECC starts from it inherits that level: ECC subagents launched without their own model, and the
+nested runs of the Claude CLI shim (LLM summaries, `/gan-build`). The smoke suite checks both. So
+if you always work at your highest level, there is nothing to configure.
+
+To deviate per agent, map ECC's Claude tiers to variants. The tiers are `opus` for planner,
+architect, spec-miner and healthcare-reviewer, `haiku` for doc-updater, docs-lookup,
+comment-analyzer, conversation-analyzer and the opensource pair, and `sonnet` for the rest. For
+example, to answer lookups faster while everything else keeps the session level:
+
+```bash
+node opencode-v2/install.js --model-map haiku=company/deepseek-v4-flash#low
+```
+
+An unmapped tier follows the session; a mapped tier always uses its variant, also in the shim. If
+your provider does not define variants yet, declare them on the model in `opencode.json`. The
+request fields below are DeepSeek's public API; a self-hosted server may expose different ones,
+so check with whoever runs it:
 
 ```json
 {
@@ -196,9 +210,8 @@ differently, so check with whoever runs it):
       "models": {
         "deepseek-v4-flash": {
           "variants": [
-            { "id": "fast", "body": { "thinking": { "type": "disabled" } } },
-            { "id": "high", "body": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" } },
-            { "id": "max", "body": { "thinking": { "type": "enabled" }, "reasoning_effort": "max" } }
+            { "id": "low", "body": { "thinking": { "type": "disabled" } } },
+            { "id": "high", "body": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" } }
           ]
         }
       }
@@ -206,17 +219,6 @@ differently, so check with whoever runs it):
   }
 }
 ```
-
-Then install with the tier map:
-
-```bash
-node opencode-v2/install.js --model-map opus=company/deepseek-v4-flash#max,sonnet=company/deepseek-v4-flash#high,haiku=company/deepseek-v4-flash#fast
-```
-
-Planning and architecture then think at the maximum effort, review and build work at high, and
-lookup or documentation agents answer without a thinking pass. OpenCode's own title agent can
-use the fast variant too (`"agents": { "title": { "model": "company/deepseek-v4-flash#fast" } }`).
-The smoke suite checks that the variant's request fields reach the subagent's model requests.
 
 ## Rules
 
@@ -268,20 +270,20 @@ node opencode-v2/smoke/run.js --opencode "$(command -v opencode)"
 It covers GateGuard, config protection, hookify bash/file/prompt/stop rules, patch
 translation, compaction, a read-only ECC subagent, skill loading, the compact skill catalog,
 path-scoped rules, slash command expansion (including commands that must not run shell
-interpolation), startup auto-sync, reasoning-tier variants, the review gate, the Claude CLI shim
+interpolation), startup auto-sync, reasoning levels (per-tier variants and inheritance from the
+session), the review gate, the Claude CLI shim
 with its tool restrictions, and SessionEnd. Unit and integration tests that need no OpenCode
 binary run with the rest of the repository tests: `node tests/run-all.js opencode-v2`.
 
 ## Recommended setup for a self-hosted DeepSeek V4 Flash
 
 With an unmetered in-house model, spend tokens on computation (reasoning, independent review,
-side tasks) rather than on prompt size:
+side tasks) rather than on prompt size. Select your highest reasoning level for the session, and
+install with:
 
 ```bash
-node opencode-v2/install.js \
-  --model-map opus=company/deepseek-v4-flash#max,sonnet=company/deepseek-v4-flash#high,haiku=company/deepseek-v4-flash#fast \
-  --skill-catalog auto --rules common,typescript,angular --review-gate --claude-shim
+node opencode-v2/install.js --skill-catalog auto --rules common,typescript,angular --review-gate --claude-shim
 ```
 
-Adjust the provider id, model id and rule sets to your setup, and add the variants from the
-reasoning tiers section to `opencode.json`.
+ECC subagents, the review pass and the shim then all run at the level you picked. Adjust the rule
+sets to your stack.
