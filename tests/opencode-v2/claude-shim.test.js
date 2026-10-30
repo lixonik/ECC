@@ -28,7 +28,7 @@ process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', async () => {
   const emit = event => process.stdout.write(JSON.stringify({ sessionID: 'ses_fake', timestamp: Date.now(), ...event }) + '\\n');
   if (process.env.FAKE_UNICODE) {
-    const payload = Buffer.from(JSON.stringify({ sessionID: 'ses_unicode', type: 'text', part: { messageID: 'm', text: 'Привет 🙂' } }) + '\\n');
+    const payload = Buffer.from(JSON.stringify({ sessionID: 'ses_unicode', type: 'text', part: { messageID: 'm', text: 'Привет \u{1f642}' } }) + '\\n');
     const split = payload.indexOf(Buffer.from('П')) + 1;
     process.stdout.write(payload.subarray(0, split));
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -166,7 +166,7 @@ async function main() {
     results.push(await test('UTF-8 characters split between child output chunks stay intact', async () => {
       const result = await run(['-p', 'go'], { env: { FAKE_UNICODE: '1' } });
       assert.strictEqual(result.code, 0);
-      assert.strictEqual(result.stdout, 'Привет 🙂\n');
+      assert.strictEqual(result.stdout, 'Привет \u{1f642}\n');
     }));
 
     results.push(await test('wall-clock timeout stops a run before its first response', async () => {
