@@ -142,10 +142,11 @@ async function main() {
     const before = fs.readFileSync(manifestFile, 'utf8');
     const past = new Date(Date.now() - 60000);
     fs.utimesSync(manifestFile, past, past);
+    const beforeMtimeNs = fs.statSync(manifestFile, { bigint: true }).mtimeNs;
     const report = installer.syncInstall(configDir, { root: fakeRoot });
     assert.strictEqual(report.changed, false);
     assert.strictEqual(fs.readFileSync(manifestFile, 'utf8'), before);
-    assert.strictEqual(fs.statSync(manifestFile).mtimeMs, past.getTime());
+    assert.strictEqual(fs.statSync(manifestFile, { bigint: true }).mtimeNs, beforeMtimeNs);
   })));
 
   results.push(await test('files the user deleted or edited are not brought back by sync', () => withFakeRoot(async ({ fakeRoot, configDir, agent }) => {
