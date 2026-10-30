@@ -150,13 +150,23 @@ languages get no suggestions and rely on the id list.
 ## Review gate
 
 A model reviewing its own work in the same context tends to approve it. With `--review-gate`,
-when a turn changed files (including edits made by subagents) and no `*-reviewer` subagent ran,
-the bridge holds the turn open once: it lists the changed files and asks the model to run
-`code-reviewer` (or `--review-agent <id>`, for example `typescript-reviewer`) in a fresh context
-and fix every CRITICAL and HIGH finding. It fires at most once per user turn, after ECC's own
-Stop hooks, and like any Stop continuation it needs an interactive session (TUI or `opencode
-serve`), not single-shot `opencode run`. It costs one review per changed turn, which pays off
-when tokens are cheap and the model is small.
+the bridge asks the model to run `code-reviewer` (or `--review-agent <id>`, for example
+`typescript-reviewer`) in a fresh context and fix every CRITICAL and HIGH finding before finishing.
+A reviewer counts only after its tool call completes successfully and the changes still match
+the snapshot taken when that review started. Failed reviews and later edits require another review.
+
+In Git projects, the gate compares working-tree contents with a baseline captured at the start of
+the user turn, including untracked files. This also catches changes made by shell commands,
+generators and formatters. Existing changes that remain untouched do not trigger a review.
+Outside Git, it tracks successful edit, write and patch tool calls, including subagent edits.
+Inspection is bounded to 2,000 files, 8 MiB per file and 32 MiB in total. Incomplete inspection
+produces a diagnostic instead of recording a successful review.
+The snapshot covers working-tree contents; index-only edits are not a separate review target.
+
+The gate runs after ECC's own Stop hooks and shares their bounded continuation limit. It needs an
+interactive session (TUI or `opencode serve`), since single-shot `opencode run` cannot resume a
+finished turn. A completed reviewer call records that a review ran; the model remains responsible
+for assessing and addressing its findings.
 
 ## Claude CLI shim
 
@@ -174,6 +184,18 @@ Code those calls fail and the features stay off. `--claude-shim` puts a `claude`
 - `--max-turns` stops the run; `--allowedTools` / `--disallowedTools` (including
   `Bash(git diff:*)`) are enforced by the plugin inside the nested run;
 - hooks are off in the nested run and a nested `claude` call is refused.
+
+Command-specific shell restrictions accept literal simple commands. Compound commands, pipelines,
+redirections and executable substitutions are refused when these restrictions apply. A bare
+`Bash` or `PowerShell` rule still grants unrestricted shell access unless a command restriction
+also applies. The rules filter tool invocations; they do not sandbox the programs being called.
+
+Each nested run has a five-minute wall-clock timeout. Set `ECC_CLAUDE_SHIM_TIMEOUT_MS` to a positive
+integer in milliseconds to change it. Timeout and `--max-turns` termination stop the child process
+tree; JSON output reports `error_timeout` or `error_max_turns`. Streamed text is decoded as UTF-8
+across chunk boundaries, including Russian text.
+On Windows, detached processes that outlive their parent can escape tree termination. Cleanup
+failures are reported on stderr; the shim still returns within its bounded shutdown window.
 
 LLM session summaries turn on together with the shim (`--llm-summary` is implied). Limits: every
 call starts a private OpenCode server, which adds a few seconds; Python callers on native Windows

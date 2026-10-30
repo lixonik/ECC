@@ -20,11 +20,28 @@ async function test(name, fn) {
 }
 
 const FAKE_OPENCODE = `
+const fs = require('fs');
+const { spawn } = require('child_process');
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', async () => {
   const emit = event => process.stdout.write(JSON.stringify({ sessionID: 'ses_fake', timestamp: Date.now(), ...event }) + '\\n');
+  if (process.env.FAKE_UNICODE) {
+    const payload = Buffer.from(JSON.stringify({ sessionID: 'ses_unicode', type: 'text', part: { messageID: 'm', text: 'Привет 🙂' } }) + '\\n');
+    const split = payload.indexOf(Buffer.from('П')) + 1;
+    process.stdout.write(payload.subarray(0, split));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    process.stdout.write(payload.subarray(split));
+    return;
+  }
+  if (process.env.FAKE_TREE_PID_FILE) {
+    const leaf = spawn(process.execPath, ['-e', 'require("fs").writeFileSync(process.env.FAKE_TREE_PID_FILE, String(process.pid)); setTimeout(() => process.exit(0), Number(process.env.FAKE_LEAF_LIFETIME || 10000));'], { detached: process.env.FAKE_DETACHED_PARENT_EXIT === '1', stdio: process.env.FAKE_DETACHED_PARENT_EXIT ? ['ignore', 'inherit', 'inherit'] : 'ignore', windowsHide: true });
+    leaf.unref();
+    while (!fs.existsSync(process.env.FAKE_TREE_PID_FILE)) await new Promise(resolve => setTimeout(resolve, 20));
+    if (process.env.FAKE_DETACHED_PARENT_EXIT) process.exit(0);
+  }
+  if (process.env.FAKE_INITIAL_DELAY) await new Promise(resolve => setTimeout(resolve, Number(process.env.FAKE_INITIAL_DELAY)));
   const args = process.argv.slice(2);
   const steps = Number(process.env.FAKE_STEPS || 1);
   for (let step = 0; step < steps; step += 1) {
@@ -41,6 +58,30 @@ process.stdin.on('end', async () => {
 function capture() {
   let text = '';
   return { write: chunk => { text += chunk; }, get text() { return text; } };
+}
+
+function fixtureProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function assertProcessStopped(pid) {
+  const deadline = Date.now() + 2000;
+  while (fixtureProcessRunning(pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+  assert.ok(!fixtureProcessRunning(pid), `descendant ${pid} is still running`);
+}
+
+function killFixtureProcess(pid) {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
 }
 
 async function main() {
@@ -120,6 +161,95 @@ async function main() {
       assert.strictEqual(result.code, 1);
       assert.strictEqual(json.subtype, 'error_max_turns');
       assert.ok(json.num_turns >= 2 && json.num_turns < 20);
+    }));
+
+    results.push(await test('UTF-8 characters split between child output chunks stay intact', async () => {
+      const result = await run(['-p', 'go'], { env: { FAKE_UNICODE: '1' } });
+      assert.strictEqual(result.code, 0);
+      assert.strictEqual(result.stdout, 'Привет 🙂\n');
+    }));
+
+    results.push(await test('wall-clock timeout stops a run before its first response', async () => {
+      const result = await run(['-p', 'go', '--output-format', 'json'], { env: { ECC_CLAUDE_SHIM_TIMEOUT_MS: '300', FAKE_INITIAL_DELAY: '1500' } });
+      assert.strictEqual(result.code, 1);
+      const json = JSON.parse(result.stdout.trim());
+      assert.strictEqual(json.is_error, true);
+      assert.strictEqual(json.subtype, 'error_timeout');
+      assert.strictEqual(json.num_turns, 0);
+      assert.ok(result.stderr.includes('timeout'), result.stderr);
+    }));
+
+    results.push(await test('invalid timeout configuration fails without starting OpenCode', async () => {
+      for (const timeout of ['0', '-1', 'garbage', '1.5', '2147483648']) {
+        const result = await run(['-p', 'go'], { env: { ECC_CLAUDE_SHIM_TIMEOUT_MS: timeout } });
+        assert.strictEqual(result.code, 1, timeout);
+        assert.strictEqual(result.stdout, '', timeout);
+        assert.ok(result.stderr.includes('ECC_CLAUDE_SHIM_TIMEOUT_MS'), result.stderr);
+      }
+    }));
+
+    results.push(await test('max-turns terminates descendants before resolving', async () => {
+      const pidFile = path.join(dir, 'max-turns-leaf.pid');
+      let leafPid;
+      try {
+        const result = await run(['-p', 'go', '--max-turns', '1', '--output-format', 'json'], { env: { FAKE_TREE_PID_FILE: pidFile, FAKE_STEPS: '20', FAKE_DELAY: '150' } });
+        leafPid = Number(fs.readFileSync(pidFile, 'utf8'));
+        assert.strictEqual(JSON.parse(result.stdout.trim()).subtype, 'error_max_turns');
+        await assertProcessStopped(leafPid);
+      } finally {
+        leafPid ??= fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) : undefined;
+        if (leafPid) killFixtureProcess(leafPid);
+      }
+    }));
+
+    results.push(await test('timeout terminates a running descendant before returning', async () => {
+      const pidFile = path.join(dir, 'timeout-leaf.pid');
+      let leafPid;
+      try {
+        const pending = run(['-p', 'go', '--output-format', 'json'], { env: { ECC_CLAUDE_SHIM_TIMEOUT_MS: '5000', FAKE_TREE_PID_FILE: pidFile, FAKE_INITIAL_DELAY: '10000' } });
+        const result = await pending;
+        leafPid = Number(fs.readFileSync(pidFile, 'utf8'));
+        assert.strictEqual(result.code, 1);
+        assert.strictEqual(JSON.parse(result.stdout.trim()).subtype, 'error_timeout');
+        await assertProcessStopped(leafPid);
+      } finally {
+        leafPid ??= fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) : undefined;
+        if (leafPid) killFixtureProcess(leafPid);
+      }
+    }));
+
+    if (process.platform === 'win32') {
+      results.push(await test('timeout reports unconfirmed cleanup after a detached child outlives its parent', async () => {
+        const pidFile = path.join(dir, 'orphan-leaf.pid');
+        let leafPid;
+        try {
+          const result = await run(['-p', 'go', '--output-format', 'json'], { env: {
+            ECC_CLAUDE_SHIM_TIMEOUT_MS: '5000',
+            FAKE_TREE_PID_FILE: pidFile,
+            FAKE_DETACHED_PARENT_EXIT: '1',
+            FAKE_LEAF_LIFETIME: '60000',
+          } });
+          leafPid = Number(fs.readFileSync(pidFile, 'utf8'));
+          assert.strictEqual(result.code, 1);
+          assert.strictEqual(JSON.parse(result.stdout.trim()).subtype, 'error_timeout');
+          assert.match(result.stderr, /descendant cleanup|process tree/);
+        } finally {
+          leafPid ??= fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) : undefined;
+          if (leafPid) {
+            killFixtureProcess(leafPid);
+            await assertProcessStopped(leafPid);
+          }
+        }
+      }));
+    }
+
+    results.push(await test('a missing binary emits one structured failure and releases its timeout', async () => {
+      const result = await run(['-p', 'go', '--output-format', 'json'], { env: { ECC_OPENCODE_BIN: path.join(dir, 'missing-opencode-binary') } });
+      assert.strictEqual(result.code, 1);
+      const json = JSON.parse(result.stdout.trim());
+      assert.strictEqual(json.subtype, 'error_during_execution');
+      assert.strictEqual(json.is_error, true);
+      assert.ok(result.stderr.includes('cannot start OpenCode'), result.stderr);
     }));
 
     results.push(await test('nested calls and empty prompts are refused', async () => {
