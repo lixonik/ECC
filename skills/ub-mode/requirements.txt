@@ -1,0 +1,8 @@
+crapper @ https://github.com/unclebob/crapper/archive/6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d.zip
+dryer @ https://github.com/unclebob/dryer/archive/66ff6d21a42c04afcad89c78a80066176d1294b0.zip
+mutator @ https://github.com/unclebob/mutator/archive/a5a0cb803b66e0cdb8bf471b3b08af701d424a41.zip
+tree-sitter==0.24.0
+tree-sitter-language-pack==0.7.3
+tree-sitter-c-sharp==0.23.5
+tree-sitter-embedded-template==0.25.0
+tree-sitter-yaml==0.7.2

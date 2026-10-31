@@ -12,6 +12,7 @@ const ECC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const RUN_TIMEOUT_MS = 180000;
 const SHELL_PROBE = 'node -e "console.log(\'ecc-shell-ok\')"';
 const GATEGUARD_OFF = Object.freeze({ ECC_GATEGUARD: 'off', ECC_OPENCODE_DEBUG: process.env.ECC_OPENCODE_DEBUG ?? '' });
+const UB_MODE_DIR = path.join(ECC_ROOT, 'skills', 'ub-mode').split(path.sep).join('/');
 
 const SCENARIOS = {
   'shell-ok': {
@@ -270,6 +271,30 @@ const SCENARIOS = {
       expect(allTexts(last).filter(text => text.includes('Review gate:')).length === 1, 'the gate fires only once in the turn');
     },
   },
+  'reviewer-ub-mode': {
+    env: GATEGUARD_OFF,
+    install: { skillCatalog: 'compact' },
+    prompt: 'Delegate a review of feature.ts and preserve verification gaps.',
+    files: { 'feature.ts': 'export const reviewed = true;\n' },
+    steps: [
+      { tool: 'subagent', args: { agent: 'code-reviewer', description: 'Review with ub-mode', prompt: '[[scenario:child-ub-review]] Review feature.ts with ub-mode and report unavailable local quality tools as an incomplete gate.' } },
+      { text: 'The reviewer reported its verification gap.' },
+    ],
+    check: ({ requests, projectDir }) => {
+      const children = requests.filter(request => userTexts(request).some(text => text.includes('[[scenario:child-ub-review]]')));
+      const child = children[0];
+      const tools = child ? toolNames(child) : [];
+      const results = toolResults(children);
+      expect(child && systemOf(child).includes('Load ub-mode') && systemOf(child).includes('scripts/review.js') && systemOf(child).includes('Security (CRITICAL)'), 'the reviewer receives ub-mode instructions alongside the existing security checklist');
+      expect(tools.includes('skill') && tools.includes('read') && tools.includes('shell') && !tools.some(name => ['edit', 'write', 'patch'].includes(name)), 'the reviewer can load skills and run local tools while source editing stays disabled');
+      expect(child && !systemOf(child).includes('<id>ub-mode</id>'), 'ub-mode remains loadable outside the compact catalog');
+      expect(results.some(text => text.includes('# ub-mode for ECC Review')), 'the reviewer loads the actual ub-mode skill');
+      expect(results.some(text => text.includes('# First Make it Work') && text.includes('Use the crapper tool')), 'the reviewer reads the pinned upstream principles');
+      expect(results.some(text => /"ok"\s*:\s*false/.test(text) && /"status"\s*:\s*"incomplete"/.test(text)), 'the actual runner reports unavailable tooling as an incomplete gate');
+      expect(toolResults(requests).some(text => text.includes('UB-REVIEW-INCOMPLETE')), 'the reviewer returns the verification gap to the parent');
+      expect(fs.readFileSync(path.join(projectDir, 'feature.ts'), 'utf8') === 'export const reviewed = true;\n', 'the review preserves the target source');
+    },
+  },
   'claude-shim': {
     env: GATEGUARD_OFF,
     install: { claudeShim: true },
@@ -331,6 +356,12 @@ const SCENARIOS = {
 const CHILD_SCENARIOS = {
   'child-plan': [{ text: 'PLAN-OK' }],
   'child-review': [{ text: 'REVIEW-OK: no CRITICAL or HIGH issues.' }],
+  'child-ub-review': [
+    { tool: 'skill', args: { id: 'ub-mode' } },
+    { tool: 'read', args: { path: `${UB_MODE_DIR}/references/upstream-skill.md` } },
+    { tool: 'shell', args: { command: `node "${UB_MODE_DIR}/scripts/review.js" --project . --file feature.ts --python ./.ecc-smoke/no-python` } },
+    { text: 'UB-REVIEW-INCOMPLETE: local quality tools were unavailable; the quality gate did not pass.' },
+  ],
   'shim-inner': [{ tool: 'shell', args: { command: 'echo should-be-blocked' } }, { text: 'SHIM-INNER-OK' }],
   'shim-compound-inner': [
     { tool: 'shell', args: { command: 'echo ecc-allowed; echo ecc-unexpected' } },
