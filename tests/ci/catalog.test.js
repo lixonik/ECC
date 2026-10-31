@@ -225,6 +225,26 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  if (test('validates and synchronizes double-hyphen project structure separators', () => {
+    const testDir = createTestDir();
+    try {
+      writeCatalogFixture(testDir, { extraTreeBlock: '' });
+      for (const relative of ['AGENTS.md', 'docs/zh-CN/AGENTS.md']) {
+        const file = path.join(testDir, relative);
+        fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^(agents|skills|commands)\/ - /gm, '$1/ -- '));
+      }
+      assert.ok(runCatalogCheck({ root: testDir }).checks.every(check => check.ok));
+      fs.mkdirSync(path.join(testDir, 'skills/skill-2'));
+      fs.writeFileSync(path.join(testDir, 'skills/skill-2/SKILL.md'), '# Skill 2\n');
+      const updated = runCatalogCheck({ root: testDir, writeMode: true });
+      assert.ok(updated.checks.every(check => check.ok));
+      assert.ok(fs.readFileSync(path.join(testDir, 'AGENTS.md'), 'utf8').includes('skills/ -- 2 workflow'));
+      assert.ok(fs.readFileSync(path.join(testDir, 'docs/zh-CN/AGENTS.md'), 'utf8').includes('skills/ -- 2 个工作流'));
+    } finally {
+      cleanupTestDir(testDir);
+    }
+  })) passed++; else failed++;
+
   if (test('rejects unmarked skill undercounts in English and Chinese agent trees', () => {
     const testDir = createTestDir();
     try {

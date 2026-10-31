@@ -130,7 +130,7 @@ paths in ECC commands and skills remain correct.
 
 What matters is that the right skill reaches the model: on a SkillsBench subset, having the
 relevant skill raised DeepSeek V4-Flash pass rates by 18-26 points, while how the skill was
-worded barely mattered ([arXiv:2605.31408](https://arxiv.org/abs/2605.31408)). Listing all 311
+worded barely mattered ([arXiv:2605.31408](https://arxiv.org/abs/2605.31408)). Listing all 315
 skills is the blunt way to get there and costs every request ~125k characters of attention.
 
 - `full` - every skill described, as in Claude Code.
@@ -170,6 +170,17 @@ The gate runs after ECC's own Stop hooks and shares their bounded continuation l
 interactive session (TUI or `opencode serve`), since single-shot `opencode run` cannot resume a
 finished turn. A completed reviewer call records that a review ran; the model remains responsible
 for assessing and addressing its findings.
+
+The default `code-reviewer` also loads `ub-mode`, reads its pinned upstream principles and runs
+the local `crapper`, `dryer` and `mutator` integration alongside its existing checks. Install
+the dedicated Python tools and configure a noninteractive coverage command using the
+[ub-mode setup reference](../skills/ub-mode/references/setup.md). Missing tools or coverage
+remain explicit verification gaps. Skills stay loadable by ID in `compact` and `auto` catalogs;
+an explicit skill exclusion or `--no-skills` must be reported by the reviewer.
+
+In the ECC checkout, `npm run ub-mode:update` pulls the tracked upstream ref into a checksummed
+snapshot while preserving ECC's review instructions and tool settings. `npm run ub-mode:check`
+verifies it offline. Updating is a separate maintenance action and never runs during a review.
 
 ## Claude CLI shim
 

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "pythonMinimum": "3.11",
+  "tools": {
+    "crapper": {
+      "repository": "https://github.com/unclebob/crapper",
+      "revision": "6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d",
+      "archive": "https://github.com/unclebob/crapper/archive/6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d.zip",
+      "version": "0.1.0",
+      "license": "0BSD",
+      "extensions": [".clj", ".cljc", ".cljs", ".bb", ".java", ".go", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".rs", ".py"]
+    },
+    "dryer": {
+      "repository": "https://github.com/unclebob/dryer",
+      "revision": "66ff6d21a42c04afcad89c78a80066176d1294b0",
+      "archive": "https://github.com/unclebob/dryer/archive/66ff6d21a42c04afcad89c78a80066176d1294b0.zip",
+      "version": "0.1.0",
+      "license": "0BSD",
+      "extensions": [".clj", ".cljc", ".cljs", ".cljd", ".bb", ".java", ".go", ".ts", ".tsx", ".mts", ".cts", ".rs", ".py"]
+    },
+    "mutator": {
+      "repository": "https://github.com/unclebob/mutator",
+      "revision": "a5a0cb803b66e0cdb8bf471b3b08af701d424a41",
+      "archive": "https://github.com/unclebob/mutator/archive/a5a0cb803b66e0cdb8bf471b3b08af701d424a41.zip",
+      "version": "0.1.0",
+      "license": "0BSD",
+      "extensions": [".clj", ".cljc", ".cljs", ".bb", ".java", ".go", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".rs", ".py"]
+    }
+  },
+  "parser": {
+    "tree-sitter": "0.24.0",
+    "tree-sitter-language-pack": "0.7.3",
+    "compatibility": "The process-local download adapter validates the requested bundled grammar instead of downloading it."
+  },
+  "umlViewer": {
+    "repository": "https://github.com/unclebob/uml-viewer",
+    "revision": "f65dafe93b3cb1b4e6bb02dbe41503ed05bd9ebf",
+    "license": null,
+    "required": false,
+    "mode": "Optional headless IR generation with Clojure CLI and Java 21; GUI launch is not part of automated review."
+  }
+}
