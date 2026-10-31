@@ -144,19 +144,32 @@ Outside `full`, every other skill stays loadable by id, and all their ids are li
 Each prompt also gets up to three suggestions picked by ECC's local retrieval (BM25 plus hashed
 vectors, no network), filtered by the project's stack and dropped when the match is weak. The
 suggestions are appended to the user message rather than the system prompt, so the prompt prefix
-stays stable for server-side prefix caching. The retrieval index is English; prompts in other
-languages get no suggestions and rely on the id list.
+stays stable for server-side prefix caching. The English retrieval index is supplemented by local
+Russian intent aliases for accessibility, bug fixes, E2E tests, commit messages, refactoring,
+Angular changes, verification and security review. Case, `ё` and mixed technical vocabulary are
+normalized. These aliases use the same stack filter, catalog exclusions and three-suggestion
+limit. They cover common requests rather than translating arbitrary prompts.
 
 ## Review gate
 
 A model reviewing its own work in the same context tends to approve it. With `--review-gate`,
-when a turn changed files (including edits made by subagents) and no `*-reviewer` subagent ran,
-the bridge holds the turn open once: it lists the changed files and asks the model to run
-`code-reviewer` (or `--review-agent <id>`, for example `typescript-reviewer`) in a fresh context
-and fix every CRITICAL and HIGH finding. It fires at most once per user turn, after ECC's own
-Stop hooks, and like any Stop continuation it needs an interactive session (TUI or `opencode
-serve`), not single-shot `opencode run`. It costs one review per changed turn, which pays off
-when tokens are cheap and the model is small.
+the bridge asks the model to run `code-reviewer` (or `--review-agent <id>`, for example
+`typescript-reviewer`) in a fresh context and fix every CRITICAL and HIGH finding before finishing.
+A reviewer counts only after its tool call completes successfully and the changes still match
+the snapshot taken when that review started. Failed reviews and later edits require another review.
+
+In Git projects, the gate compares working-tree contents with a baseline captured at the start of
+the user turn, including untracked files. This also catches changes made by shell commands,
+generators and formatters. Existing changes that remain untouched do not trigger a review.
+Outside Git, it tracks successful edit, write and patch tool calls, including subagent edits.
+Inspection is bounded to 2,000 files, 8 MiB per file and 32 MiB in total. Incomplete inspection
+produces a diagnostic instead of recording a successful review.
+The snapshot covers working-tree contents; index-only edits are not a separate review target.
+
+The gate runs after ECC's own Stop hooks and shares their bounded continuation limit. It needs an
+interactive session (TUI or `opencode serve`), since single-shot `opencode run` cannot resume a
+finished turn. A completed reviewer call records that a review ran; the model remains responsible
+for assessing and addressing its findings.
 
 ## Claude CLI shim
 
@@ -174,6 +187,18 @@ Code those calls fail and the features stay off. `--claude-shim` puts a `claude`
 - `--max-turns` stops the run; `--allowedTools` / `--disallowedTools` (including
   `Bash(git diff:*)`) are enforced by the plugin inside the nested run;
 - hooks are off in the nested run and a nested `claude` call is refused.
+
+Command-specific shell restrictions accept literal simple commands. Compound commands, pipelines,
+redirections and executable substitutions are refused when these restrictions apply. A bare
+`Bash` or `PowerShell` rule still grants unrestricted shell access unless a command restriction
+also applies. The rules filter tool invocations; they do not sandbox the programs being called.
+
+Each nested run has a five-minute wall-clock timeout. Set `ECC_CLAUDE_SHIM_TIMEOUT_MS` to a positive
+integer in milliseconds to change it. Timeout and `--max-turns` termination stop the child process
+tree; JSON output reports `error_timeout` or `error_max_turns`. Streamed text is decoded as UTF-8
+across chunk boundaries, including Russian text.
+On Windows, detached processes that outlive their parent can escape tree termination. Cleanup
+failures are reported on stderr; the shim still returns within its bounded shutdown window.
 
 LLM session summaries turn on together with the shim (`--llm-summary` is implied). Limits: every
 call starts a private OpenCode server, which adds a few seconds; Python callers on native Windows
@@ -267,6 +292,13 @@ scripted model, so nothing leaves the machine and no API key is needed:
 node opencode-v2/smoke/run.js --opencode "$(command -v opencode)"
 ```
 
+On native Windows, pass the actual executable, including when npm also installs an
+`opencode.cmd` launcher:
+
+```powershell
+node opencode-v2/smoke/run.js --opencode "C:/tools/opencode/opencode.exe"
+```
+
 It covers GateGuard, config protection, hookify bash/file/prompt/stop rules, patch
 translation, compaction, a read-only ECC subagent, skill loading, the compact skill catalog,
 path-scoped rules, slash command expansion (including commands that must not run shell
@@ -274,6 +306,43 @@ interpolation), startup auto-sync, reasoning levels (per-tier variants and inher
 session), the review gate, the Claude CLI shim
 with its tool restrictions, and SessionEnd. Unit and integration tests that need no OpenCode
 binary run with the rest of the repository tests: `node tests/run-all.js opencode-v2`.
+
+## Diagnose a workstation or model endpoint
+
+Run the doctor before the first session or after changing an installation:
+
+```powershell
+node opencode-v2/doctor.js --project "C:/repos/my-project"
+node opencode-v2/doctor.js --project "C:/repos/my-project" --opencode "C:/tools/opencode/opencode.exe" --json
+```
+
+The default checks run locally. They inspect Node.js (20+), OpenCode (2.0.32+), Git, the selected
+shell, the configured hook Node executable, JSONC syntax, hook and skill manifests, and installed
+files against their ownership manifest. The doctor does not run ECC hooks or change files.
+An absent installation is a warning; missing installed files are errors, and customized files
+produce warnings. Use `--config-dir` for a nondefault installation. On native Windows, batch
+launchers (`.cmd` or `.bat`) cannot be checked by the doctor; pass the native executable instead.
+
+Endpoint requests require an explicit `--probe`. Use the endpoint's real model ID and, if it
+requires authentication, the name of an environment variable containing its key:
+
+```powershell
+node opencode-v2/doctor.js --project "C:/repos/my-project" --probe --base-url "https://inference.example/v1" --model "deepseek-v4-flash" --api-key-env MODEL_API_KEY --thinking on --reasoning-effort high --timeout-ms 120000
+```
+
+The probe sends two synthetic OpenAI-compatible streaming requests. It checks streamed text,
+fragmented tool arguments, a harmless local tool result and a second response that confirms a
+fresh token from that result. It preserves `reasoning_content` across the tool round-trip when
+the endpoint returns it. Repository contents are not sent. Reports omit credentials, endpoint
+URLs and raw provider responses; redirects are refused, and a deadline and byte limit bound the
+requests. An unauthenticated endpoint needs no `--api-key-env`.
+
+`--thinking` and `--reasoning-effort` send DeepSeek's public request fields. A self-hosted server
+may expose different fields. A successful probe verifies this direct API exchange, while the
+smoke suite checks OpenCode's adapter. When thinking is requested but no reasoning is observed,
+the doctor reports a warning; observing reasoning does not prove a particular effort level was
+applied. Exit codes are `0` for passed checks with optional warnings, `1` for failed checks, and
+`2` for invalid CLI arguments.
 
 ## Recommended setup for a self-hosted DeepSeek V4 Flash
 
@@ -286,4 +355,5 @@ node opencode-v2/install.js --skill-catalog auto --rules common,typescript,angul
 ```
 
 ECC subagents, the review pass and the shim then all run at the level you picked. Adjust the rule
-sets to your stack.
+sets to your stack. Run the local doctor, then the explicit endpoint probe, before relying on
+the configured reasoning levels and tool round-trips.

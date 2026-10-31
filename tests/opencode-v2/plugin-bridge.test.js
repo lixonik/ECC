@@ -7,6 +7,8 @@ const { pathToFileURL } = require('url');
 const repoRoot = path.join(__dirname, '..', '..');
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-oc2-plugin-'));
 
+const originalEnvironment = { ...process.env };
+
 for (const key of Object.keys(process.env)) {
   if (/^(ECC_|CLAUDE)/i.test(key)) delete process.env[key];
 }
@@ -247,7 +249,11 @@ async function main() {
       const before = toolEvent('write', { path: file, content: 'x\n' }, { sessionID: `${sessionID}_child` });
       await trigger(fake.hooks, 'tool.execute.after', { ...before, status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } });
     }
-    if (reviewer) await trigger(fake.hooks, 'tool.execute.before', toolEvent('subagent', { agent: reviewer, description: 'review', prompt: 'review' }, { sessionID }));
+    if (reviewer) {
+      const review = toolEvent('subagent', { agent: reviewer, description: 'review', prompt: 'review' }, { sessionID });
+      await trigger(fake.hooks, 'tool.execute.before', review);
+      await trigger(fake.hooks, 'tool.execute.after', { ...review, status: 'completed', result: { content: [{ type: 'text', text: 'review completed' }] } });
+    }
     fake.events.push({ type: 'session.execution.succeeded', data: { sessionID } });
     await new Promise(resolve => setTimeout(resolve, 1500));
   };
@@ -282,6 +288,44 @@ async function main() {
     assert.ok(fake.synthetic[0].text.includes('`typescript-reviewer`'));
   }));
 
+  results.push(await test('review gate refuses a failed reviewer and rechecks edits made after a completed review', async () => {
+    const fake = await startGated('gate-review-completion');
+    const sessionID = 'ses_gate_completion';
+    await trigger(fake.hooks, 'session.prompt', { sessionID, messageID: 'm_start', prompt: { text: 'implement' }, delivery: 'queue' });
+    const edit = toolEvent('write', { path: 'src/a.ts', content: 'first' }, { sessionID });
+    await trigger(fake.hooks, 'tool.execute.after', { ...edit, status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } });
+    const failedReview = toolEvent('subagent', { agent: 'code-reviewer', prompt: 'review' }, { sessionID });
+    await trigger(fake.hooks, 'tool.execute.before', failedReview);
+    await trigger(fake.hooks, 'tool.execute.after', { ...failedReview, status: 'error', error: 'review unavailable' });
+    fake.events.push({ type: 'session.execution.succeeded', data: { sessionID } });
+    await waitFor(() => fake.synthetic.length === 1);
+    assert.ok(fake.synthetic[0].text.includes('Review gate:'));
+    const review = toolEvent('subagent', { agent: 'code-reviewer', prompt: 'review' }, { sessionID });
+    await trigger(fake.hooks, 'tool.execute.before', review);
+    await trigger(fake.hooks, 'tool.execute.after', { ...review, status: 'completed', result: { content: [{ type: 'text', text: 'review completed' }] } });
+    const laterEdit = toolEvent('write', { path: 'src/a.ts', content: 'second' }, { sessionID });
+    await trigger(fake.hooks, 'tool.execute.after', { ...laterEdit, status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } });
+    fake.events.push({ type: 'session.execution.succeeded', data: { sessionID } });
+    await waitFor(() => fake.synthetic.length === 2);
+    assert.ok(fake.synthetic[1].text.includes('Review gate:'));
+  }));
+
+  results.push(await test('review gate detects shell-generated files in Git without claiming the initial dirty tree', async () => {
+    const { execFileSync } = require('child_process');
+    const projectDir = createProject('gate-shell', { 'owner.ts': 'owner change' });
+    execFileSync('git', ['init', '-q', projectDir]);
+    const fake = await start(projectDir, { hooks: { enabled: true, profile: 'minimal', disabled: ['stop:session-end', 'stop:evaluate-session', 'stop:cost-tracker'] }, reviewGate: true });
+    await runTurn(fake, 'ses_initial_dirty');
+    assert.strictEqual(fake.synthetic.length, 0);
+    const sessionID = 'ses_shell_change';
+    await trigger(fake.hooks, 'session.prompt', { sessionID, messageID: 'm_shell', prompt: { text: 'generate' }, delivery: 'queue' });
+    fs.writeFileSync(path.join(projectDir, 'generated.ts'), 'new code');
+    fake.events.push({ type: 'session.execution.succeeded', data: { sessionID } });
+    await waitFor(() => fake.synthetic.length === 1);
+    assert.ok(fake.synthetic[0].text.includes('- generated.ts'));
+    assert.ok(!fake.synthetic[0].text.includes('- owner.ts'));
+  }));
+
   results.push(await test('review gate counts subagent edits toward the parent turn', async () => {
     const fake = await startGated('gate-child');
     await runTurn(fake, 'ses_parent', { childWrites: ['src/child.ts'] });
@@ -304,6 +348,10 @@ async function main() {
     assert.ok(english.prompt.text.includes('- accessibility:'));
     const russian = await trigger(fake.hooks, 'session.prompt', { sessionID: 'ses_auto', messageID: 'm2', prompt: { text: 'Создай компонент формы входа' }, delivery: 'queue' });
     assert.strictEqual(russian.prompt.text, 'Создай компонент формы входа');
+    const compactRussian = await start(createProject('russian-catalog'), { hooks: false, skillCatalog: 'compact' });
+    const suggestedRussian = await trigger(compactRussian.hooks, 'session.prompt', { sessionID: 'ses_russian', messageID: 'm_ru', prompt: { text: 'Сделай таблицу доступной для скринридеров' }, delivery: 'queue' });
+    assert.ok(suggestedRussian.prompt.text.startsWith('Сделай таблицу доступной для скринридеров\n\n<ecc-skill-suggestions>'));
+    assert.ok(suggestedRussian.prompt.text.includes('- accessibility:'));
     const full = await start(createProject('full-catalog'), { hooks: false });
     assert.strictEqual(full.hooks['session.prompt'], undefined, 'no suggestions when every skill is already described');
   }));
@@ -344,7 +392,9 @@ async function main() {
   }));
 
   for (const cleanup of cleanups) await cleanup();
-  fs.rmSync(sandbox, { recursive: true, force: true });
+  for (const key of Object.keys(process.env)) if (!(key in originalEnvironment)) delete process.env[key];
+  Object.assign(process.env, originalEnvironment);
+  await fs.promises.rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   const failed = results.filter(ok => !ok).length;
   console.log(`\nPassed: ${results.length - failed}`);
   console.log(`Failed: ${failed}`);

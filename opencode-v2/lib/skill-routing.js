@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { russianSkillAliases } from './skill-query-aliases.js';
 
 export const CORE_SKILLS = Object.freeze([
   'ecc-guide', 'tdd-workflow', 'verification-loop', 'security-review', 'coding-standards', 'search-first', 'git-workflow',
@@ -97,11 +98,14 @@ export function createSkillRouter(root, skills, projectStack) {
   return {
     suggest(query, { candidates, limit = SUGGESTION_LIMIT } = {}) {
       if (typeof query !== 'string' || !query.trim()) return [];
+      const aliases = russianSkillAliases(query, projectStack).filter(id => byId.has(id));
       const results = searchRetrieval(index, query, { limit: 24 });
       const topBm25 = Math.max(0, ...results.map(result => result.bm25));
-      return results
+      const retrieved = results
         .filter(result => hasRelevanceEvidence(result, topBm25))
-        .map(result => result.id.slice('skill:'.length))
+        .map(result => result.id.slice('skill:'.length));
+      const exact = results.filter(result => result.exact).map(result => result.id.slice('skill:'.length));
+      return [...new Set([...exact, ...aliases, ...retrieved])]
         .filter(id => (!candidates || candidates.has(id)) && isStackCompatible(id, projectStack))
         .slice(0, limit)
         .map(id => byId.get(id));

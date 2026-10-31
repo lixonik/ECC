@@ -193,7 +193,7 @@ export async function setupEcc(ctx, options = {}) {
     if (event.tool === CODE_MODE_TOOL) return;
     if (!BUILTIN_TOOLS.has(event.tool)) await toolIndex.refreshFor(event.tool);
     const session = await sessionState(event.sessionID);
-    if (reviewGate && event.tool === 'subagent') reviewGate.recordSubagent((await rootOf(session)).id, event.input?.agent);
+    if (event.tool === 'subagent') await reviewGate?.beginReview((await rootOf(session)).id, event.id, event.input?.agent);
     const calls = toClaudeCalls(event.tool, event.input, translateEnv(event.sessionID));
     const contexts = [];
     for (const [index, call] of calls.entries()) {
@@ -234,8 +234,9 @@ export async function setupEcc(ctx, options = {}) {
     const eventName = event.status === 'error' ? 'PostToolUseFailure' : 'PostToolUse';
     if (reviewGate && event.status === 'completed' && FILE_CHANGING_TOOLS.has(event.tool)) {
       const changed = calls.flatMap(call => [call.input?.file_path, call.input?.new_file_path]).filter(value => typeof value === 'string' && value);
-      reviewGate.recordChanges((await rootOf(session)).id, changed);
+      await reviewGate.recordChanges((await rootOf(session)).id, changed);
     }
+    if (event.tool === 'subagent') await reviewGate?.completeReview((await rootOf(session)).id, event.id, event.status);
     const feedback = [...(pendingToolContext.get(event.id) ?? [])];
     pendingToolContext.delete(event.id);
     allowedCalls.delete(event.id);
@@ -279,7 +280,7 @@ export async function setupEcc(ctx, options = {}) {
     }
     session.stopHookActive = false;
     session.continuations = 0;
-    reviewGate?.startTurn(session.id);
+    await reviewGate?.startTurn(session.id);
     await ensureStarted(session, session.createdHere ? 'startup' : 'resume');
     const outcome = await runHooks('UserPromptSubmit', '', payloadFor(session, 'UserPromptSubmit', { prompt: text }));
     if (outcome.block) {
@@ -316,7 +317,7 @@ export async function setupEcc(ctx, options = {}) {
       last_assistant_message: session.lastAssistantText,
     }));
     if (session.continuations >= MAX_STOP_CONTINUATIONS) return;
-    const reason = outcome.block ? outcome.reason : reviewGate?.claim(sessionID);
+    const reason = outcome.block ? outcome.reason : await reviewGate?.claim(sessionID);
     if (!reason) return;
     session.stopHookActive = true;
     session.continuations += 1;
