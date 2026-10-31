@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: 専門コードレビュースペシャリスト。品質、セキュリティ、保守性のためにコードを積極的にレビューします。コードの記述または変更直後に使用してください。すべてのコード変更に対して必須です。
-tools: ["Read", "Grep", "Glob", "Bash"]
+tools: ["Read", "Grep", "Glob", "Bash", "Skill"]
 model: sonnet
 ---
 

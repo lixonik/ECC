@@ -1,6 +1,6 @@
 # Curation
 
-pi/core includes 134 of 314 skills and 24 of 98 commands from the root of ECC.
+pi/core includes 134 of 315 skills and 24 of 98 commands from the root of ECC.
 Everything excluded is listed here with its reason.
 
 ## Rules
@@ -179,6 +179,7 @@ Exclude anything that:
 | `terminal-ops` | ECC ops workflow |
 | `tinystruct-patterns` | niche single-framework pack |
 | `token-budget-advisor` | session/token mechanics |
+| `ub-mode` | requires separately installed Python quality tools and GitHub-backed upstream maintenance |
 | `ui-demo` | Playwright video recording with runtime installs |
 | `ui-to-vue` | runs an npx converter package at runtime |
 | `uncloud` | niche cluster ops |
