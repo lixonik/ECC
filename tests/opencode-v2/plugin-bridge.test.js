@@ -348,6 +348,10 @@ async function main() {
     assert.ok(english.prompt.text.includes('- accessibility:'));
     const russian = await trigger(fake.hooks, 'session.prompt', { sessionID: 'ses_auto', messageID: 'm2', prompt: { text: 'Создай компонент формы входа' }, delivery: 'queue' });
     assert.strictEqual(russian.prompt.text, 'Создай компонент формы входа');
+    const compactRussian = await start(createProject('russian-catalog'), { hooks: false, skillCatalog: 'compact' });
+    const suggestedRussian = await trigger(compactRussian.hooks, 'session.prompt', { sessionID: 'ses_russian', messageID: 'm_ru', prompt: { text: 'Сделай таблицу доступной для скринридеров' }, delivery: 'queue' });
+    assert.ok(suggestedRussian.prompt.text.startsWith('Сделай таблицу доступной для скринридеров\n\n<ecc-skill-suggestions>'));
+    assert.ok(suggestedRussian.prompt.text.includes('- accessibility:'));
     const full = await start(createProject('full-catalog'), { hooks: false });
     assert.strictEqual(full.hooks['session.prompt'], undefined, 'no suggestions when every skill is already described');
   }));

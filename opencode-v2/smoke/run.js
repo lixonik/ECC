@@ -64,6 +64,23 @@ const SCENARIOS = {
       expect(main[1] && systemOf(main[1]).includes('<rule id="angular/coding-style">'), 'reading a component activates the Angular rules');
     },
   },
+  'russian-suggestions': {
+    env: GATEGUARD_OFF,
+    install: { skillCatalog: 'compact' },
+    prompt: 'Сделай таблицу доступной для скринридеров',
+    steps: [
+      { tool: 'skill', args: { id: 'accessibility' } },
+      { text: 'Russian suggestion step finished.' },
+    ],
+    check: ({ requests }) => {
+      const main = requests.find(request => toolNames(request).includes('skill'));
+      const prompt = main ? userTexts(main).join('\n') : '';
+      expect(prompt.includes('Сделай таблицу доступной для скринридеров'), 'Russian request reaches the model unchanged');
+      expect(prompt.includes('<ecc-skill-suggestions>') && prompt.includes('- accessibility:'), 'Russian intent selects the accessibility skill');
+      expect(main && !systemOf(main).includes('<id>accessibility</id>'), 'the suggested skill is outside the compact catalog');
+      expect(toolResults(requests).some(text => /WCAG|accessibility/i.test(text)), 'the Russian suggestion loads through the real skill tool');
+    },
+  },
   'command-kotlin': {
     env: GATEGUARD_OFF,
     steps: [{ text: 'Kotlin command step finished.' }],
@@ -270,6 +287,23 @@ const SCENARIOS = {
       expect(inner.length > 0 && inner.every(request => request.body.reasoning_effort === 'max'), 'the nested run inherits the session reasoning variant');
     },
   },
+  'claude-shim-compound': {
+    env: GATEGUARD_OFF,
+    install: { claudeShim: true },
+    prompt: 'Check the restricted claude CLI shell.',
+    steps: [
+      { tool: 'shell', args: { command: 'claude -p "[[scenario:shim-compound-inner]] Run the shell probes" --allowedTools "Bash(echo:*)"' } },
+      { text: 'Restricted shim step finished.' },
+    ],
+    check: ({ requests }) => {
+      const inner = requests.filter(request => userTexts(request).some(text => text.includes('[[scenario:shim-compound-inner]]')));
+      const results = toolResults(inner);
+      expect(results.some(text => text.includes('is not allowed in this headless run')), 'the shim rejects compound commands under a prefix allow rule');
+      expect(results.some(text => /^ecc-allowed\s*$/m.test(text)), 'the shim still runs a permitted literal command');
+      expect(!results.some(text => /^ecc-unexpected\s*$/m.test(text)), 'the rejected second command never executes');
+      expect(toolResults(requests).some(text => text.includes('SHIM-COMPOUND-OK')), 'the restricted shim returns its final answer');
+    },
+  },
   'skill-load': {
     env: GATEGUARD_OFF,
     prompt: 'Load the TDD skill.',
@@ -294,7 +328,16 @@ const SCENARIOS = {
   },
 };
 
-const CHILD_SCENARIOS = { 'child-plan': [{ text: 'PLAN-OK' }], 'child-review': [{ text: 'REVIEW-OK: no CRITICAL or HIGH issues.' }], 'shim-inner': [{ tool: 'shell', args: { command: 'echo should-be-blocked' } }, { text: 'SHIM-INNER-OK' }] };
+const CHILD_SCENARIOS = {
+  'child-plan': [{ text: 'PLAN-OK' }],
+  'child-review': [{ text: 'REVIEW-OK: no CRITICAL or HIGH issues.' }],
+  'shim-inner': [{ tool: 'shell', args: { command: 'echo should-be-blocked' } }, { text: 'SHIM-INNER-OK' }],
+  'shim-compound-inner': [
+    { tool: 'shell', args: { command: 'echo ecc-allowed; echo ecc-unexpected' } },
+    { tool: 'shell', args: { command: 'echo ecc-allowed' } },
+    { text: 'SHIM-COMPOUND-OK' },
+  ],
+};
 
 const failures = [];
 

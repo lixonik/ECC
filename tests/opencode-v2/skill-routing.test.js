@@ -67,6 +67,67 @@ async function main() {
       assert.ok(suggest('write a commit message').includes('conventional-commit-review'));
     }));
 
+    results.push(await test('Russian requests activate precise local workflow aliases', () => {
+      const queries = [
+        ['Сделай таблицу доступной для скринридеров', 'accessibility'],
+        ['Почини падающий unit test и добавь регрессионный тест', 'orch-fix-defect'],
+        ['Исправь ошибку обработки данных в компоненте', 'orch-fix-defect'],
+        ['Настрой сквозные тесты браузера', 'e2e-testing'],
+        ['Напиши сообщение для коммита', 'conventional-commit-review'],
+        ['Проведи рефакторинг сервиса без изменения поведения', 'orch-refine-code'],
+      ];
+      for (const [query, skill] of queries) assert.ok(suggest(query).includes(skill), `${query}: ${suggest(query)}`);
+      assert.deepStrictEqual(suggest('Сделай таблицу доступной для скринридеров'), ['accessibility']);
+    }));
+
+    results.push(await test('Russian aliases support case, normalized characters and mixed technical vocabulary', () => {
+      const queries = [
+        ['СДЕЛАЙ ЭЛЕМЕНТЫ ДОСТУПНЫМИ ДЛЯ ЭКРАННОГО ДИКТОРА', 'accessibility'],
+        ['Добавь регрессионный ТЕСТ для сломанного обработчика', 'orch-fix-defect'],
+        ['Подготовь сообщение коммита по завершённым изменениям', 'conventional-commit-review'],
+        ['Подготовь сообщение коммита по завершенным изменениям', 'conventional-commit-review'],
+        ['Напиши e2e сценарии на Playwright', 'e2e-testing'],
+      ];
+      for (const [query, skill] of queries) assert.ok(suggest(query).includes(skill), `${query}: ${suggest(query)}`);
+    }));
+
+    results.push(await test('Russian aliases retain stack, candidate and result bounds', () => {
+      const compact = new Set(skills.map(skill => skill.id).filter(id => id !== 'ecc-guide'));
+      assert.ok(router.suggest('Создай компонент формы входа', { candidates: compact }).some(skill => skill.id === 'angular-developer'));
+      assert.ok(router.suggest('Замени RxJS на сигналы в Angular сервисе', { candidates: compact }).some(skill => skill.id === 'angular-developer'));
+      assert.deepStrictEqual(suggest('Создай компонент формы входа'), []);
+      assert.deepStrictEqual(router.suggest('Сделай интерфейс доступным для экранного диктора', { candidates: new Set() }), []);
+      assert.ok(router.suggest('Почини ошибку и напиши сообщение коммита, добавь сквозные тесты', { limit: 1 }).length <= 1);
+      const pythonRouter = routing.createSkillRouter(repoRoot, skills, new Set(['python']));
+      assert.ok(!pythonRouter.suggest('Создай компонент Angular формы').some(skill => skill.id === 'angular-developer'));
+    }));
+
+    results.push(await test('Russian aliases preserve explicit IDs and ignore unavailable skills', () => {
+      const compact = new Set(skills.map(skill => skill.id).filter(id => id !== 'ecc-guide'));
+      assert.strictEqual(router.suggest('Используй e2e-testing и исправь ошибку', { candidates: compact })[0].id, 'e2e-testing');
+      assert.ok(router.suggest('Проведи ревью кода и изменений перед PR', { candidates: compact }).some(skill => skill.id === 'verification-loop'));
+      assert.ok(router.suggest('Проверь безопасность обработки данных', { candidates: compact }).some(skill => skill.id === 'security-review'));
+      assert.ok(router.suggest('Проверь защищённость обработки данных', { candidates: compact }).some(skill => skill.id === 'security-review'));
+      assert.ok(router.suggest('Проверь защище\u0308нность обработки данных', { candidates: compact }).some(skill => skill.id === 'security-review'));
+      const minimal = routing.createSkillRouter(repoRoot, skills.filter(skill => skill.id === 'ecc-guide'), stack);
+      assert.deepStrictEqual(minimal.suggest('Исправь ошибку и напиши сообщение коммита'), []);
+    }));
+
+    results.push(await test('Russian greetings and unrelated prose do not activate workflow aliases', () => {
+      for (const query of ['Привет', 'Помоги', 'Сделай красиво', 'Сервис доставки доступен завтра', 'Мы обсудили форму облаков', 'Статья о доступных авиабилетах', 'Проверь кодекс поведения']) {
+        assert.deepStrictEqual(suggest(query), [], query);
+      }
+    }));
+
+    results.push(await test('explicitly excluded workflows are not added as Russian aliases', () => {
+      for (const query of ['Исправь ошибку в обработчике без рефакторинга', 'Почини баг, но не делай рефакторинг сервиса']) {
+        assert.ok(suggest(query).includes('orch-fix-defect'));
+        assert.ok(!suggest(query).includes('orch-refine-code'));
+      }
+      assert.deepStrictEqual(suggest('Не добавляй e2e тесты'), []);
+      assert.deepStrictEqual(router.suggest('Не проводи ревью кода'), []);
+    }));
+
     results.push(await test('weak lexical overlap produces no suggestion', () => {
       assert.deepStrictEqual(suggest('Refactor this RxJS service to signals'), []);
       assert.deepStrictEqual(suggest('Создай компонент формы входа'), []);
