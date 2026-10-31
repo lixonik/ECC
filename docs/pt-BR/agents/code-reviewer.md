@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Especialista em revisão de código. Revisa código proativamente em busca de qualidade, segurança e manutenibilidade. Use imediatamente após escrever ou modificar código. DEVE SER USADO para todas as alterações de código.
-tools: ["Read", "Grep", "Glob", "Bash"]
+tools: ["Read", "Grep", "Glob", "Bash", "Skill"]
 model: sonnet
 ---
 

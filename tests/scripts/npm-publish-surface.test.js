@@ -69,6 +69,7 @@ function buildExpectedPublishPaths(repoRoot) {
     "scripts/feedback.js",
     "scripts/agent-convert.js",
     "scripts/catalog.js",
+    "scripts/update-ub-mode.js",
     "scripts/ci/scan-supply-chain-iocs.js",
     "scripts/ci/supply-chain-advisory-sources.js",
     "scripts/ci/validate-skill-host-compat.js",

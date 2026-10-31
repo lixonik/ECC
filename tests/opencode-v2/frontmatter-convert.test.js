@@ -70,6 +70,46 @@ async function main() {
     assert.ok(body.includes('Prompt Defense Baseline'));
   }));
 
+  results.push(await test('code reviewer conversion retains ub-mode checks and read-only tool permissions', () => {
+    const source = fs.readFileSync(path.join(repoRoot, 'agents', 'code-reviewer.md'), 'utf8');
+    const original = splitFrontmatter(source);
+    assert.ok(convert.parseToolList(original.data.tools).includes('Skill'));
+    const { data, body } = splitFrontmatter(convert.convertAgent(source));
+    const denied = new Set(data.permissions.map(rule => rule.action));
+    assert.ok(denied.has('edit'));
+    for (const action of ['read', 'grep', 'glob', 'shell', 'skill']) assert.ok(!denied.has(action), action);
+    assert.ok(body.includes('`ub-mode`'));
+    assert.ok(body.includes('references/upstream-skill.md'));
+    assert.ok(body.includes('scripts/review.js') && body.includes('--project "<project-dir>"'));
+    assert.ok(body.includes('--base "<review-base>"') && body.includes('--file "<relative-file>"'));
+    assert.ok(body.indexOf('**Load ub-mode**') < body.indexOf('**Gather context**'));
+    assert.ok(body.indexOf('**Read surrounding code**') < body.indexOf('**Run ub-mode tools for this scope**'));
+    assert.ok(body.includes('committed PR review'));
+    assert.ok(body.includes('## Confidence-Based Filtering'));
+    assert.ok(body.includes('## Review Checklist'));
+    assert.ok(body.includes('## Approval Criteria'));
+    assert.ok(body.includes('Do not install or download tools'));
+    assert.ok(body.includes('incomplete'));
+    assert.ok(body.includes('Do not commit, push'));
+  }));
+
+  results.push(await test('ub-mode remains loadable with its local references and runner in a compact skill catalog', async () => {
+    const { loadEccSkills, applySkillCatalog } = await load('lib/skills.js');
+    const { skills, skipped } = loadEccSkills(repoRoot);
+    assert.deepStrictEqual(skipped, []);
+    const loaded = skills.find(skill => skill.id === 'ub-mode');
+    assert.ok(loaded && loaded.content.includes('references/upstream-skill.md'));
+    const directory = path.dirname(loaded.path);
+    assert.ok(fs.statSync(path.join(directory, 'references', 'upstream-skill.md')).isFile());
+    assert.ok(fs.statSync(path.join(directory, 'scripts', 'review.js')).isFile());
+    const compact = applySkillCatalog(skills, 'compact');
+    const hidden = compact.skills.find(skill => skill.id === 'ub-mode');
+    assert.ok(compact.hidden.includes('ub-mode'));
+    assert.strictEqual(hidden.autoinvoke, false);
+    assert.strictEqual(hidden.path, loaded.path);
+    assert.strictEqual(hidden.content, loaded.content);
+  }));
+
   results.push(await test('agent conversion never grants permissions, only denies', () => {
     for (const file of fs.readdirSync(path.join(repoRoot, 'agents')).filter(f => f.endsWith('.md'))) {
       const { data } = splitFrontmatter(convert.convertAgent(fs.readFileSync(path.join(repoRoot, 'agents', file), 'utf8')));
