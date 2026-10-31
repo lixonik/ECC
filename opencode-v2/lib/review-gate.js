@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { realpathSync } from 'node:fs';
 import { readWorkingTreeSnapshot } from './working-tree.js';
 
 export const DEFAULT_REVIEW_AGENT = 'code-reviewer';
@@ -14,11 +15,28 @@ function changedFiles(before, after) {
   return [...new Set([...before.keys(), ...after.keys()])].filter(file => before.get(file) !== after.get(file));
 }
 
-export function createReviewGate({ agent = DEFAULT_REVIEW_AGENT, projectDir, readSnapshot = options => readWorkingTreeSnapshot(projectDir, options) }) {
+function canonicalDirectory(directory) {
+  try {
+    return realpathSync.native(directory);
+  } catch {
+    return path.resolve(directory);
+  }
+}
+
+function canonicalProjectFile(projectDir, requestedProjectDir, filePath) {
+  const absolute = path.resolve(requestedProjectDir, filePath);
+  const relative = path.relative(requestedProjectDir, absolute);
+  const outside = relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  return outside ? absolute : path.resolve(projectDir, relative);
+}
+
+export function createReviewGate({ agent = DEFAULT_REVIEW_AGENT, projectDir: requestedProjectDir, readSnapshot }) {
+  const projectDir = canonicalDirectory(requestedProjectDir);
+  const inspectWorkingTree = readSnapshot ?? (options => readWorkingTreeSnapshot(projectDir, options));
   const turns = new Map();
   const snapshot = async options => {
     try {
-      return normalizeSnapshot(await readSnapshot(options), projectDir);
+      return normalizeSnapshot(await inspectWorkingTree(options), projectDir);
     } catch (error) {
       return { available: true, complete: false, files: new Map(), diagnostic: error.message };
     }
@@ -46,7 +64,7 @@ export function createReviewGate({ agent = DEFAULT_REVIEW_AGENT, projectDir, rea
     },
     async recordChanges(rootID, filePaths) {
       const turn = turnOf(rootID);
-      for (const filePath of filePaths) turn.explicit.add(path.resolve(projectDir, filePath));
+      for (const filePath of filePaths) turn.explicit.add(canonicalProjectFile(projectDir, requestedProjectDir, filePath));
       if (filePaths.length > 0) turn.revision += 1;
     },
     async beginReview(rootID, callID, agentID) {

@@ -118,7 +118,7 @@ export async function readWorkingTreeSnapshot(projectDir, options = {}) {
   const files = new Map();
   let directory = path.resolve(projectDir);
   try {
-    directory = (await git(directory, ['rev-parse', '--show-toplevel'], limits)).toString('utf8').trim();
+    directory = await fs.realpath((await git(directory, ['rev-parse', '--show-toplevel'], limits)).toString('utf8').trim());
     const output = await git(directory, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules'], limits);
     const head = await currentHead(directory, limits);
     const changedSinceCommit = await committedPaths(directory, head, options.baselineHead, limits);

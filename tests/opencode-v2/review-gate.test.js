@@ -135,6 +135,30 @@ async function main() {
     }
   }));
 
+  results.push(await test('Git directory aliases keep changed files relative and deduplicate explicit edits', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-gate-alias-'));
+    const target = path.join(directory, 'target');
+    const alias = path.join(directory, 'alias');
+    try {
+      fs.mkdirSync(target);
+      fs.symlinkSync(target, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      execFileSync('git', ['init', '-q', target]);
+      fs.writeFileSync(path.join(target, 'owner.ts'), 'owner change');
+      const gate = createReviewGate({ projectDir: alias });
+      await gate.startTurn('session');
+      fs.writeFileSync(path.join(target, 'generated.ts'), 'new code');
+      const shellMessage = await gate.claim('session');
+      assert.ok(shellMessage.includes('\n- generated.ts\n'), shellMessage);
+      assert.ok(!shellMessage.includes('- owner.ts'), shellMessage);
+      await gate.recordChanges('session', [path.join(alias, 'generated.ts'), 'generated.ts']);
+      const editMessage = await gate.claim('session');
+      assert.ok(editMessage.includes('changed 1 file(s)'), editMessage);
+      assert.ok(editMessage.includes('\n- generated.ts\n'), editMessage);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  }));
+
   results.push(await test('committing initial changes does not count as new work but committed shell edits do', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-gate-commit-'));
     const configuredIdentity = (key, fallback) => {
