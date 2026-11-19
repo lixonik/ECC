@@ -161,7 +161,7 @@ test('Turkish agent instructions report the live catalog counts', () => {
   assert.ok(content.includes(`${agentCount} özel agent`));
   assert.ok(content.includes(`${skillCount} skill`));
   assert.ok(content.includes(`${commandCount} command`));
-  assert.ok(content.includes(`agents/          — ${agentCount} özel subagent`));
+  assert.match(content, new RegExp(`^agents/\\s+(?:--?|\\u2014|\\u2013)\\s+${agentCount} özel subagent`, 'm'));
   assert.match(content, new RegExp(`^skills/\\s+(?:--?|\\u2014|\\u2013)\\s+${skillCount} iş akışı`, 'm'));
   assert.ok(content.includes(`commands/        — ${commandCount} slash command`));
 });

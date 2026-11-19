@@ -2,16 +2,16 @@
 
 Full ECC for OpenCode 2.x: the Claude Code hook graph, all ECC agents, commands and skills.
 
-OpenCode 2.0 replaced the plugin API, the config format and the file layout, so the
-`.opencode/` layer in this repository (written for OpenCode 1.x) does not load there.
-This directory is a separate, V2-native integration. It does not change `.opencode/`.
+This directory provides the fork's OpenCode 2.x integration with runtime guards,
+workstation diagnostics, and `ub-mode` review. The upstream ECC plugin also has an
+OpenCode 2.x loader, documented in [`.opencode/`](../.opencode/README.md).
 
 | ECC in Claude Code | ECC in OpenCode V2 |
 | --- | --- |
-| `hooks/hooks.json` (27 hooks: GateGuard, config protection, quality gates, hookify, memory persistence, continuous learning, cost tracking, notifications) | Executed unchanged by the bridge plugin through the Claude Code hook protocol |
-| 71 agents (`agents/*.md`) | OpenCode subagents (`agents/*.md`), Claude `tools` allowlists become `deny` permissions |
-| 97 commands (`commands/*.md`) | OpenCode slash commands (`commands/*.md`), `$ARGUMENTS` and `$1..$n` work as-is |
-| 311 skills (`skills/*/SKILL.md`) | Registered by the plugin, loaded with the `skill` tool |
+| `hooks/hooks.json` (GateGuard, config protection, quality gates, hookify, memory persistence, continuous learning, cost tracking, notifications) | Executed unchanged by the bridge plugin through the Claude Code hook protocol |
+| Agents (`agents/*.md`) | OpenCode subagents (`agents/*.md`), Claude `tools` allowlists become `deny` permissions |
+| Commands (`commands/*.md`) | OpenCode slash commands (`commands/*.md`), `$ARGUMENTS` and `$1..$n` work as-is |
+| Skills (`skills/*/SKILL.md`) | Registered by the plugin, loaded with the `skill` tool |
 | `${CLAUDE_PLUGIN_ROOT}` in commands and skills | Set in the environment of every OpenCode shell command |
 
 ## Requirements
@@ -130,8 +130,8 @@ paths in ECC commands and skills remain correct.
 
 What matters is that the right skill reaches the model: on a SkillsBench subset, having the
 relevant skill raised DeepSeek V4-Flash pass rates by 18-26 points, while how the skill was
-worded barely mattered ([arXiv:2605.31408](https://arxiv.org/abs/2605.31408)). Listing all 315
-skills is the blunt way to get there and costs every request ~125k characters of attention.
+worded barely mattered ([arXiv:2605.31408](https://arxiv.org/abs/2605.31408)). The full
+catalog adds the description of every skill to each request.
 
 - `full` - every skill described, as in Claude Code.
 - `auto` - the core workflow skills (`tdd-workflow`, `verification-loop`, `security-review`, ...)
